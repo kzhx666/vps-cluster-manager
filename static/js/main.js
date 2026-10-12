@@ -1715,11 +1715,18 @@ async function pollTaskLogs() {
 
     if (newLogs.length > existingCount) {
       for (let i = existingCount; i < newLogs.length; i++) {
-        const lineText = newLogs[i];
+        let rawLine = newLogs[i] || '';
+        // 彻底过滤终端颜色转义符 (\x1b, [0m, [32m 等)
+        const lineText = rawLine
+          .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+          .replace(/\uFFFD\[[0-9]+(;[0-9]+)*[a-zA-Z]/g, '')
+          .replace(/\[[0-9]{1,2}(;[0-9]{1,2})*m/g, '')
+          .replace(/\uFFFD/g, '');
+
         const lineDiv = document.createElement('div');
         lineDiv.className = 'terminal-line';
 
-        if (lineText.includes('[OK]') || lineText.includes('成功') || lineText.includes('完成') || lineText.includes('🎉') || lineText.includes('🟢')) {
+        if (lineText.includes('[OK]') || lineText.includes('[ OK ]') || lineText.includes('成功') || lineText.includes('完成') || lineText.includes('🎉') || lineText.includes('🟢')) {
           lineDiv.classList.add('log-ok');
         } else if (lineText.includes('[ERR]') || lineText.includes('错误') || lineText.includes('失败') || lineText.includes('❌') || lineText.includes('🔴')) {
           lineDiv.classList.add('log-err');

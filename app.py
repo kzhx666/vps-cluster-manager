@@ -423,11 +423,20 @@ def create_task(task_type, server_id, server_name=""):
         tasks[task_id] = task
     return task_id
 
+ANSI_ESCAPE = re.compile(r'(\x1b\[[0-9;?]*[a-zA-Z]|\ufffd\[[0-9]+(;[0-9]+)*[a-zA-Z]|\[[0-9]{1,2}(;[0-9]{1,2})*m)')
+
+def strip_ansi(text):
+    if not text:
+        return ""
+    clean = ANSI_ESCAPE.sub('', str(text))
+    return clean.replace('\ufffd', '')
+
 def append_task_log(task_id, message, step=None, progress=None):
     with tasks_lock:
         if task_id in tasks:
             ts = datetime.now().strftime("%H:%M:%S")
-            tasks[task_id]["logs"].append(f"[{ts}] {message}")
+            clean_msg = strip_ansi(str(message))
+            tasks[task_id]["logs"].append(f"[{ts}] {clean_msg}")
             if step is not None:
                 tasks[task_id]["step"] = step
             if progress is not None:
