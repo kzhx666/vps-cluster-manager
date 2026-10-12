@@ -49,20 +49,44 @@ install_deps() {
   ok "系统依赖就绪"
 }
 
-# 3. 拉取/更新代码到 /opt/vps-cluster-manager
+# 3. 拉取/更新代码到 /opt/vps-cluster-manager (自动备份与保留配置)
 setup_codebase() {
   mkdir -p /opt
+  local BACKUP_CONFIG="/var/backups/vps-cluster-manager-config.json"
+  mkdir -p /var/backups
+
+  # 无论执行何种操作，优先备份现有数据至系统级目录
+  if [[ -f "$INSTALL_DIR/data/config.json" && -s "$INSTALL_DIR/data/config.json" ]]; then
+    cp -f "$INSTALL_DIR/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
+  elif [[ -f "/root/vps-cluster-manager/data/config.json" && -s "/root/vps-cluster-manager/data/config.json" ]]; then
+    cp -f "/root/vps-cluster-manager/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
+  fi
+
   if [[ -d "$INSTALL_DIR/.git" ]]; then
-    info "检测到已有代码库，正在更新最新代码..."
+    info "检测到已有代码库，正在更新最新代码 (保留已有配置)..."
     cd "$INSTALL_DIR"
     git fetch --all >/dev/null 2>&1 || true
     git reset --hard origin/main >/dev/null 2>&1 || true
   else
     info "正在拉取项目代码至 ${INSTALL_DIR} ..."
+    if [[ -d "$INSTALL_DIR/data" ]]; then
+      mv "$INSTALL_DIR/data" "/tmp/vps_cm_data_bak" 2>/dev/null || true
+    fi
     rm -rf "$INSTALL_DIR" 2>/dev/null || true
     git clone "$REPO_URL" "$INSTALL_DIR"
+    if [[ -d "/tmp/vps_cm_data_bak" ]]; then
+      mv "/tmp/vps_cm_data_bak" "$INSTALL_DIR/data" 2>/dev/null || true
+    fi
   fi
   cd "$INSTALL_DIR"
+  mkdir -p "$INSTALL_DIR/data"
+
+  # 如果目标 config.json 不存在或为空，但备份存在，则自动还原
+  if [[ (! -f "$INSTALL_DIR/data/config.json" || ! -s "$INSTALL_DIR/data/config.json") && -f "$BACKUP_CONFIG" ]]; then
+    cp -f "$BACKUP_CONFIG" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+    ok "已自动恢复原有的服务器配置数据！"
+  fi
+
   ok "代码已就绪: ${INSTALL_DIR}"
 }
 
@@ -155,8 +179,15 @@ case "${1:-}" in
     journalctl -u "$APP_NAME" -f -n 50
     ;;
   update)
-    cd "$INSTALL_DIR" && git pull && systemctl restart "$APP_NAME"
-    echo "项目已升级并重启！"
+    echo "正在升级 VPS Cluster Manager 至最新版本..."
+    cd "$INSTALL_DIR"
+    git fetch --all
+    git reset --hard origin/main
+    if [[ -f "$INSTALL_DIR/venv/bin/pip" ]]; then
+      "$INSTALL_DIR/venv/bin/pip" install --no-cache-dir -r requirements.txt >/dev/null 2>&1 || true
+    fi
+    systemctl restart "$APP_NAME"
+    echo "🎉 项目已升级至最新版本并重启成功！原有配置完好无损。"
     ;;
   uninstall)
     systemctl stop "$APP_NAME" 2>/dev/null || true

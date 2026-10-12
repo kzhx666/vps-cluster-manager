@@ -110,6 +110,45 @@ python app.py
 
 ---
 
+## 🔄 一键更新与升级指南（保留所有已有 VPS 配置）
+
+面板内置多重防丢失保障机制，无论通过以下哪种方式升级，所有已录入的 VPS 节点数据与全局设置均完好保留：
+
+### 方法一：快捷管理命令（推荐，最简便）
+如果此前使用一键脚本安装，直接在终端执行：
+```bash
+vps-cluster-manager update
+```
+系统将自动同步 GitHub 最新代码、安装新依赖并平滑重启服务。
+
+### 方法二：手动单行命令更新（通用无损升级）
+```bash
+cd /opt/vps-cluster-manager && git fetch --all && git reset --hard origin/main && systemctl restart vps-cluster-manager
+```
+
+### 方法三：重新执行一键安装脚本（安全覆盖升级）
+```bash
+curl -fsSL https://raw.githubusercontent.com/kzhx666/vps-cluster-manager/main/install.sh | bash
+```
+> 安装脚本在拉取代码前会自动将当前配置备份至 `/var/backups`，升级完成后自动还原历史 VPS 节点。
+
+### 方法四：Docker 容器升级
+```bash
+cd /opt/vps-cluster-manager && git pull && docker compose up -d --build
+```
+
+---
+
+### 💡 历史 VPS 数据找回提示
+如果您此前在更改默认安装路径（`/opt`）之前添加过 VPS，旧数据通常保存在原运行目录（例如 `/root/vps-cluster-manager/data/config.json`），只需一条命令复制并重启即可找回：
+```bash
+cp /root/vps-cluster-manager/data/config.json /opt/vps-cluster-manager/data/config.json && systemctl restart vps-cluster-manager
+```
+或者全局搜索服务器上的备份文件：
+```bash
+find / -name "config.json" 2>/dev/null
+```
+
 ## 📋 目录架构
 
 ```

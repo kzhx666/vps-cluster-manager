@@ -58,20 +58,46 @@ DEFAULT_CONFIG = {
 
 def load_config():
     with config_lock:
-        if not os.path.exists(CONFIG_FILE):
-            save_config_unlocked(DEFAULT_CONFIG)
-            return json.loads(json.dumps(DEFAULT_CONFIG))
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # merge with defaults if keys missing
-                for k, v in DEFAULT_CONFIG["global"].items():
-                    if k not in data.get("global", {}):
-                        data.setdefault("global", {})[k] = v
-                return data
-        except Exception as e:
-            print(f"[ERROR] Failed to load config: {e}")
-            return json.loads(json.dumps(DEFAULT_CONFIG))
+        data = None
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"[ERROR] Failed to load config from {CONFIG_FILE}: {e}")
+
+        # If data is missing or has empty servers list, check historical paths and backup files
+        if not data or not data.get("servers"):
+            candidates = [
+                "/root/vps-cluster-manager/data/config.json",
+                "/root/vps-cluster-manager/config.json",
+                "/var/backups/vps-cluster-manager-config.json",
+                os.path.join(DATA_DIR, "config.json.bak"),
+                "/tmp/vps_cm_config_backup.json"
+            ]
+            for cand in candidates:
+                if os.path.isfile(cand) and cand != CONFIG_FILE:
+                    try:
+                        with open(cand, 'r', encoding='utf-8') as f:
+                            cand_data = json.load(f)
+                            if cand_data.get("servers"):
+                                print(f"[INFO] Auto-migrated {len(cand_data['servers'])} servers from historical backup {cand}")
+                                data = cand_data
+                                save_config_unlocked(data)
+                                break
+                    except Exception:
+                        pass
+
+        if not data:
+            data = json.loads(json.dumps(DEFAULT_CONFIG))
+            save_config_unlocked(data)
+            return data
+
+        # merge with defaults if keys missing
+        for k, v in DEFAULT_CONFIG["global"].items():
+            if k not in data.get("global", {}):
+                data.setdefault("global", {})[k] = v
+        return data
 
 def save_config_unlocked(data):
     try:
@@ -81,6 +107,17 @@ def save_config_unlocked(data):
         if os.path.exists(CONFIG_FILE):
             os.remove(CONFIG_FILE)
         os.rename(temp_file, CONFIG_FILE)
+
+        # Dual backup persistence: directory backup + system-wide backup
+        try:
+            bak_file = os.path.join(DATA_DIR, 'config.json.bak')
+            with open(bak_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.makedirs('/var/backups', exist_ok=True)
+            with open('/var/backups/vps-cluster-manager-config.json', 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[ERROR] Failed to save config: {e}")
 
