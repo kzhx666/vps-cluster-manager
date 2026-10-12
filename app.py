@@ -900,13 +900,36 @@ def deploy_server_worker(task_id, server_id):
         argo_status_desc = f"已启用 ({argo_domain})" if (argo_is_on and argo_domain and argo_token) else "未启用"
         append_task_log(task_id, f"部署参数就绪: 端口策略 [{port_info['allocated_summary']}], Argo 隧道 [{argo_status_desc}]", progress=55)
 
-        # Command to run installer
+        # Command to run installer with multi-CDN mirror fallback and strict exit code verification
         deploy_cmd = f"""
 {chr(10).join(env_exports)}
-curl -fsSL "{script_url}" -o /tmp/sb_install.sh || wget -qO /tmp/sb_install.sh "{script_url}"
+INSTALL_URLS="{script_url} https://fastly.jsdelivr.net/gh/kzhx666/sb-install-plus@main/install.sh https://cdn.jsdelivr.net/gh/kzhx666/sb-install-plus@main/install.sh https://mirror.ghproxy.com/{script_url} https://ghproxy.net/{script_url}"
+
+DL_OK=0
+for u in $INSTALL_URLS; do
+  echo "正在获取部署脚本: $u ..."
+  if curl -fsSL --connect-timeout 8 -m 30 "$u" -o /tmp/sb_install.sh 2>/dev/null || wget -q -T 20 -O /tmp/sb_install.sh "$u" 2>/dev/null; then
+    if [ -s /tmp/sb_install.sh ] && grep -q "Sing-box" /tmp/sb_install.sh 2>/dev/null; then
+      DL_OK=1
+      echo "部署脚本拉取成功并校验通过！"
+      break
+    fi
+  fi
+done
+
+if [ "$DL_OK" -ne 1 ]; then
+  echo "错误: 所有镜像源均无法拉取 Sing-box 安装脚本，请检查 VPS 国际互联网连接！"
+  exit 1
+fi
+
 chmod +x /tmp/sb_install.sh
 /bin/bash /tmp/sb_install.sh --auto
+INSTALL_CODE=$?
 rm -f /tmp/sb_install.sh
+if [ "$INSTALL_CODE" -ne 0 ]; then
+  echo "部署脚本执行失败，退出代码: $INSTALL_CODE"
+  exit "$INSTALL_CODE"
+fi
 """
         append_task_log(task_id, "开始执行 Sing-box 核心协议集群自动化部署...", step="部署 Sing-box 极速核心", progress=60)
         code, out = runner.run_cmd(deploy_cmd, log_callback=log_cb, timeout=800)
