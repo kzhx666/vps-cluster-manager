@@ -952,6 +952,16 @@ fi
         c_code, c_out = runner.run_cmd(check_cmd, timeout=10)
         is_running = ("active" in c_out.lower() or "running" in c_out.lower() or (c_code == 0 and c_out.strip()))
 
+        # Check cloudflared service if Argo is enabled
+        if argo_is_on and argo_domain and argo_token:
+            cf_check = "systemctl is-active cloudflared 2>/dev/null || rc-service cloudflared status 2>/dev/null || pgrep -f cloudflared"
+            _, cf_out = runner.run_cmd(cf_check, timeout=10)
+            cf_running = ("active" in cf_out.lower() or "running" in cf_out.lower())
+            if cf_running:
+                append_task_log(task_id, "Cloudflare Argo 隧道守护进程已连接并正常在线！", progress=95)
+            else:
+                append_task_log(task_id, "提示: Cloudflare Argo 隧道守护进程未处于 active 状态，请检查 Token 权限或服务日志", progress=95)
+
         # Update server state in config
         with config_lock:
             cur_cfg = load_config()
