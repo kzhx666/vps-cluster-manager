@@ -2071,6 +2071,25 @@ echo "UNINSTALLED_OK"
 '''
                         runner.run_cmd(cmd, timeout=30)
                         append_task_log(task_id, f"[{name}] Sing-box、Argo 隧道、证书与所有关联配置已彻底清理卸载完毕！")
+
+                        # 同步通知节点管理平台注销并清理已推送的订阅源
+                        push_target = global_cfg.get("push_target", {})
+                        p_url = (push_target.get("url") or "").strip().rstrip('/')
+                        p_tok = (push_target.get("token") or "").strip()
+                        if p_url and REQUESTS_AVAILABLE:
+                            try:
+                                tags_to_clean = [f"{name}本机", f"{name}优选", f"{name}"]
+                                headers = {"Authorization": f"Bearer {p_tok}"} if p_tok else {}
+                                requests.post(
+                                    f"{p_url}/api/delete_pushed_nodes",
+                                    json={"tags": tags_to_clean, "token": p_tok},
+                                    headers=headers,
+                                    timeout=5
+                                )
+                                append_task_log(task_id, f"[{name}] 已向节点管理平台同步清理订阅源: {', '.join(tags_to_clean)}")
+                            except Exception as ex_del:
+                                append_task_log(task_id, f"[{name}] 提示: 向节点管理平台请求清理订阅源 (可忽略): {ex_del}")
+
                         success_count += 1
                         with config_lock:
                             cur = load_config()
