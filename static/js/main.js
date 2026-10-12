@@ -174,6 +174,17 @@ function renderServers() {
       ? `<span class="pill-tag tag-argo">Argo: ${s.argo_domain}</span>` 
       : '';
 
+    // BBR badge
+    let bbrBadgeHtml = '';
+    const bbrVal = s.bbr_info || (s.last_check_result && s.last_check_result.bbr) || '';
+    if (bbrVal && bbrVal !== 'unknown+unknown') {
+      const isBbr3 = bbrVal.includes('bbr3');
+      const isBbr = bbrVal.includes('bbr');
+      const bColor = isBbr3 ? '#67e8f9' : (isBbr ? '#6ee7b7' : 'var(--text-dim)');
+      const bBg = isBbr3 ? 'rgba(6,182,212,0.15)' : (isBbr ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.05)');
+      bbrBadgeHtml = `<span class="pill-tag" style="background:${bBg}; border:1px solid ${bColor}; color:${bColor};">⚡ ${escapeHtml(bbrVal)}</span>`;
+    }
+
     // Latency badge
     const latencyHtml = s.latency_ms ? `<span class="badge badge-info">${s.latency_ms}ms</span>` : '';
     const osHtml = s.os_info ? `<span class="badge badge-info">${s.os_info}</span>` : '';
@@ -218,10 +229,11 @@ function renderServers() {
           <span class="detail-value text-cyan">${escapeHtml(s.tag_main || s.name)}</span>
         </div>
         <div class="detail-row">
-          <span class="detail-label">端口与域名:</span>
+          <span class="detail-label">端口与加速:</span>
           <div style="display:flex; gap:6px; flex-wrap:wrap;">
             ${portTagHtml}
             ${domainTagHtml}
+            ${bbrBadgeHtml}
           </div>
         </div>
         ${argoTagHtml ? `

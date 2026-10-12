@@ -366,8 +366,81 @@ elif command -v ntpdate >/dev/null 2>&1; then
   ntpdate -u pool.ntp.org >/dev/null 2>&1 || true
 fi
 
+# ==============================================================================
+# BBR + fq 智能检测与启用 (支持优先启用 BBRv3 / BBR)
+# ==============================================================================
+info "正在检查 TCP 拥塞控制与队列算法 (BBR / fq)..."
+CUR_CC="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo '')"
+CUR_QDISC="$(sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo '')"
+
+BBR_STATUS=""
+if echo "$CUR_CC" | grep -Eq '^(bbr|bbr3|bbrplus)$' && echo "$CUR_QDISC" | grep -Eq '^(fq|fq_pie|cake)$'; then
+  info "检测到系统已开启 ${CUR_CC} + ${CUR_QDISC}，性能已达标，跳过安装！"
+  BBR_STATUS="${CUR_CC}+${CUR_QDISC}"
+else
+  info "当前拥塞算法: ${CUR_CC:-未知}, 队列: ${CUR_QDISC:-未知}，准备激活最新 BBRv3 / BBR + fq..."
+
+  # 1. 尝试探测并加载 BBRv3 / BBR 内核模块
+  modprobe tcp_bbr3 2>/dev/null || true
+  modprobe tcp_bbr 2>/dev/null || true
+
+  # 2. 写入模块自启加载
+  if [ -d /etc/modules-load.d ]; then
+    echo "tcp_bbr3" > /etc/modules-load.d/99-bbr.conf 2>/dev/null || true
+    echo "tcp_bbr" >> /etc/modules-load.d/99-bbr.conf 2>/dev/null || true
+  fi
+  if [ -f /etc/modules ]; then
+    grep -q "tcp_bbr" /etc/modules 2>/dev/null || echo "tcp_bbr" >> /etc/modules 2>/dev/null || true
+  fi
+
+  # 3. 优选算法: bbr3 > bbr > bbrplus
+  AVAIL_CC="$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo '')"
+  TARGET_CC="bbr"
+  if echo "$AVAIL_CC" | grep -qw "bbr3"; then
+    TARGET_CC="bbr3"
+    info "检测到内核原生支持最新一代 BBRv3，优先选定 bbr3！"
+  elif echo "$AVAIL_CC" | grep -qw "bbr"; then
+    TARGET_CC="bbr"
+    info "选定 BBR 极速拥塞控制算法！"
+  elif echo "$AVAIL_CC" | grep -qw "bbrplus"; then
+    TARGET_CC="bbrplus"
+    info "选定 BBRplus 拥塞控制算法！"
+  else
+    modprobe tcp_bbr 2>/dev/null || true
+    TARGET_CC="bbr"
+  fi
+
+  # 4. 写入 sysctl 内核调优配置
+  mkdir -p /etc/sysctl.d 2>/dev/null || true
+  cat > /etc/sysctl.d/99-bbr.conf <<EOF
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = ${TARGET_CC}
+EOF
+
+  if [ -f /etc/sysctl.conf ]; then
+    sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf 2>/dev/null || true
+    sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf 2>/dev/null || true
+    echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
+    echo "net.ipv4.tcp_congestion_control = ${TARGET_CC}" >> /etc/sysctl.conf
+  fi
+
+  # 5. 应用生效
+  sysctl -p /etc/sysctl.d/99-bbr.conf >/dev/null 2>&1 || sysctl -p >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
+
+  # 6. 回读并校验
+  FINAL_CC="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo '')"
+  FINAL_QDISC="$(sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo '')"
+  if echo "$FINAL_CC" | grep -Eq '^(bbr|bbr3|bbrplus)$'; then
+    info "BBR 激活成功！当前内核运行状态: ${FINAL_CC} + ${FINAL_QDISC}"
+    BBR_STATUS="${FINAL_CC}+${FINAL_QDISC}"
+  else
+    info "已配置 BBR+fq (受限容器环境反馈: ${FINAL_CC:-未知}+${FINAL_QDISC:-未知})"
+    BBR_STATUS="${FINAL_CC}+${FINAL_QDISC}"
+  fi
+fi
+
 NOW_UTC="$(date -u +%s)"
-echo "PREFLIGHT_RESULT:{\"os\":\"$OS_NAME\",\"version\":\"$OS_VER\",\"arch\":\"$ARCH\",\"time\":$NOW_UTC}"
+echo "PREFLIGHT_RESULT:{\"os\":\"$OS_NAME\",\"version\":\"$OS_VER\",\"arch\":\"$ARCH\",\"time\":$NOW_UTC,\"bbr\":\"$BBR_STATUS\"}"
 '''
 
 # ------------------------------------------------------------------------------
@@ -414,7 +487,9 @@ def deploy_server_worker(task_id, server_id):
 
         os_str = f"{preflight_info.get('os', 'Linux')} {preflight_info.get('version', '')}".strip()
         arch_str = preflight_info.get('arch', 'x86_64')
-        append_task_log(task_id, f"环境自举完成: 操作系统 [{os_str}], 架构 [{arch_str}], 时间已完成 NTP 校准", step="端口与环境准备", progress=40)
+        bbr_str = preflight_info.get('bbr', '')
+        bbr_log = f", 内核拥塞控制 [{bbr_str}]" if bbr_str else ""
+        append_task_log(task_id, f"环境自举完成: 操作系统 [{os_str}], 架构 [{arch_str}]{bbr_log}, 时间已完成 NTP 校准", step="端口与环境准备", progress=40)
 
         # 2. Port Calculation
         port_info = calculate_ports(server, global_cfg)
@@ -502,9 +577,12 @@ rm -f /tmp/sb_install.sh
                 if s.get("id") == server_id:
                     s["status"] = "online" if is_running else "warning"
                     s["os_info"] = f"{os_str} ({arch_str})"
+                    if bbr_str:
+                        s["bbr_info"] = bbr_str
                     s["last_deployed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     s["last_check_result"] = {
                         "singbox_running": is_running,
+                        "bbr": bbr_str,
                         "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     }
                     break
@@ -671,23 +749,42 @@ def check_env(server_id):
         latency_ms = round((time.time() - start_t) * 1000, 1)
 
         code, out = runner.run_cmd(
-            "uname -m; cat /etc/os-release 2>/dev/null | grep -E '^(ID|VERSION_ID)=' || true; date -u +%s",
+            "uname -m; cat /etc/os-release 2>/dev/null | grep -E '^(ID|VERSION_ID)=' || true; echo '---BBR_CHECK---'; sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'unknown'; sysctl -n net.core.default_qdisc 2>/dev/null || echo 'unknown'",
             timeout=15
         )
         lines = out.strip().splitlines()
         arch = lines[0] if len(lines) > 0 else "unknown"
         os_id = "Linux"
-        for line in lines:
-            if line.startswith("ID="):
-                os_id = line.replace("ID=", "").strip('"\n ')
+        bbr_cc = "unknown"
+        bbr_qdisc = "unknown"
 
-        # Update server latency
+        in_bbr = False
+        bbr_lines = []
+        for line in lines[1:]:
+            if "---BBR_CHECK---" in line:
+                in_bbr = True
+                continue
+            if in_bbr:
+                bbr_lines.append(line.strip())
+            else:
+                if line.startswith("ID="):
+                    os_id = line.replace("ID=", "").strip('"\n ')
+
+        if len(bbr_lines) >= 1 and bbr_lines[0]:
+            bbr_cc = bbr_lines[0]
+        if len(bbr_lines) >= 2 and bbr_lines[1]:
+            bbr_qdisc = bbr_lines[1]
+
+        bbr_str = f"{bbr_cc}+{bbr_qdisc}"
+
+        # Update server latency and bbr
         with config_lock:
             cur_cfg = load_config()
             for s in cur_cfg.get("servers", []):
                 if s.get("id") == server_id:
                     s["latency_ms"] = latency_ms
                     s["os_info"] = f"{os_id} ({arch})"
+                    s["bbr_info"] = bbr_str
                     break
             save_config_unlocked(cur_cfg)
 
@@ -696,7 +793,8 @@ def check_env(server_id):
             "latency_ms": latency_ms,
             "os": os_id,
             "arch": arch,
-            "message": f"连接成功！延迟 {latency_ms}ms, 系统: {os_id} ({arch})"
+            "bbr": bbr_str,
+            "message": f"连接成功！延迟 {latency_ms}ms, 系统: {os_id} ({arch}), BBR: {bbr_str}"
         })
     except Exception as e:
         return jsonify({"success": False, "message": f"SSH 连接失败: {str(e)}"}), 500
@@ -774,6 +872,9 @@ echo "---IPS---"
 curl -s4m4 ip.sb 2>/dev/null || true
 echo ""
 curl -s6m4 ip.sb 2>/dev/null || true
+echo "---BBR---"
+sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "unknown"
+sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo "unknown"
 '''
         code, out = runner.run_cmd(inspect_script, timeout=25)
 
@@ -782,6 +883,7 @@ curl -s6m4 ip.sb 2>/dev/null || true
         ports = []
         ipv4 = ""
         ipv6 = ""
+        bbr_lines = []
 
         current_sec = ""
         for line in out.splitlines():
@@ -802,6 +904,14 @@ curl -s6m4 ip.sb 2>/dev/null || true
                     ipv4 = line_str
                 elif ":" in line_str and not ipv6:
                     ipv6 = line_str
+            elif current_sec == "---BBR---" and line_str:
+                bbr_lines.append(line_str)
+
+        bbr_str = ""
+        if len(bbr_lines) >= 2:
+            bbr_str = f"{bbr_lines[0]}+{bbr_lines[1]}"
+        elif len(bbr_lines) == 1:
+            bbr_str = bbr_lines[0]
 
         return {
             "success": True,
@@ -810,6 +920,7 @@ curl -s6m4 ip.sb 2>/dev/null || true
             "argo_running": (argo_status == "active"),
             "ipv4": ipv4,
             "ipv6": ipv6,
+            "bbr": bbr_str,
             "ports_count": len(ports),
             "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
@@ -838,6 +949,8 @@ def inspect_single(server_id):
                 if res.get("success"):
                     s["status"] = "online" if res.get("singbox_running") else "warning"
                     s["latency_ms"] = res.get("latency_ms")
+                    if res.get("bbr"):
+                        s["bbr_info"] = res.get("bbr")
                 else:
                     s["status"] = "error"
                 break
@@ -864,6 +977,8 @@ def inspect_all():
                         if res.get("success"):
                             target["status"] = "online" if res.get("singbox_running") else "warning"
                             target["latency_ms"] = res.get("latency_ms")
+                            if res.get("bbr"):
+                                target["bbr_info"] = res.get("bbr")
                         else:
                             target["status"] = "error"
                         break
