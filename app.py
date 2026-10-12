@@ -635,10 +635,36 @@ if command -v apk >/dev/null 2>&1; then
 elif command -v apt-get >/dev/null 2>&1; then
   info "Configuring Debian/Ubuntu (apt-get)..."
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq >/dev/null 2>&1 || true
-  apt-get install -y -qq curl wget jq tar ca-certificates bash chrony iptables iproute2 dnsutils >/dev/null 2>&1 || true
-  apt-get clean >/dev/null 2>&1 || true
-  rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+  export NEEDRESTART_MODE=a
+  export NEEDRESTART_SUSPEND=1
+  if [ -f /etc/needrestart/needrestart.conf ]; then
+    sed -i "s/#\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/g" /etc/needrestart/needrestart.conf 2>/dev/null || true
+  fi
+
+  # 检查基础运行依赖是否完备 (curl/wget, bash, tar)
+  NEED_INSTALL=0
+  if (! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1) || ! command -v bash >/dev/null 2>&1 || ! command -v tar >/dev/null 2>&1; then
+    NEED_INSTALL=1
+  fi
+
+  if [ "$NEED_INSTALL" -eq 1 ]; then
+    info "检测到缺失核心组件，正在清理锁并更新软件源..."
+    systemctl stop unattended-upgrades apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+    killall -9 apt apt-get dpkg unattended-upgrade 2>/dev/null || true
+    rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true
+    dpkg --configure -a 2>/dev/null || true
+
+    APT_OPTS="-o Acquire::http::Timeout=10 -o Acquire::https::Timeout=10 -o Acquire::Retries=1 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 30 apt-get update -qq $APT_OPTS 2>/dev/null || true
+      timeout 60 apt-get install -y -qq $APT_OPTS curl wget jq tar ca-certificates bash chrony iptables iproute2 dnsutils 2>/dev/null || true
+    else
+      apt-get update -qq $APT_OPTS 2>/dev/null || true
+      apt-get install -y -qq $APT_OPTS curl wget jq tar ca-certificates bash chrony iptables iproute2 dnsutils 2>/dev/null || true
+    fi
+  else
+    info "Debian/Ubuntu 基础环境完备 (curl/tar/bash 就绪)，跳过 apt 阻塞更新！"
+  fi
 elif command -v dnf >/dev/null 2>&1; then
   info "Configuring RHEL/Fedora/Rocky (dnf)..."
   dnf install -y -q curl wget jq tar ca-certificates bash chrony iptables iproute bind-utils >/dev/null 2>&1 || true
@@ -661,9 +687,17 @@ fi
 # Time Calibration (Reality requires time sync)
 info "Calibrating server time via NTP..."
 if command -v chronyd >/dev/null 2>&1; then
-  chronyd -q 'server pool.ntp.org iburst' >/dev/null 2>&1 || true
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 5 chronyd -q 'server pool.ntp.org iburst' >/dev/null 2>&1 || true
+  else
+    chronyd -q 'server pool.ntp.org iburst' >/dev/null 2>&1 || true
+  fi
 elif command -v ntpdate >/dev/null 2>&1; then
-  ntpdate -u pool.ntp.org >/dev/null 2>&1 || true
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 5 ntpdate -u pool.ntp.org >/dev/null 2>&1 || true
+  else
+    ntpdate -u pool.ntp.org >/dev/null 2>&1 || true
+  fi
 fi
 
 # ==============================================================================
