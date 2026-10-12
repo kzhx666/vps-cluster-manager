@@ -393,12 +393,12 @@
           <div class="form-row">
             <div class="form-group col-6">
               <label for="srv-tag-main">主节点订阅名称 (TAG_MAIN):</label>
-              <input type="text" id="srv-tag-main" placeholder="例如: HK-NAT-01 (默认使用别名)">
+              <input type="text" id="srv-tag-main" placeholder="例如: 哈基猫英国本机 (自动按 节点名+本机 组合)">
               <span class="input-tip">Reality / Hy2 / TUIC 三合一聚合到该订阅源</span>
             </div>
             <div class="form-group col-6">
               <label for="srv-tag-argo">Argo 隧道专属订阅名称 (TAG_ARGO):</label>
-              <input type="text" id="srv-tag-argo" placeholder="例如: HK-NAT-Argo">
+              <input type="text" id="srv-tag-argo" placeholder="例如: 哈基猫英国优选 (自动按 节点名+优选 组合)">
               <span class="input-tip">若开启 Argo 隧道，此节点单独推送到此订阅源</span>
             </div>
           </div>
@@ -480,7 +480,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('modal-server-edit')">取消</button>
-        <button id="btn-save-server" class="btn btn-primary">保存服务器</button>
+        <button id="btn-save-server" class="btn btn-primary" onclick="saveServer()">保存服务器</button>
       </div>
     </div>
   </div>
@@ -696,6 +696,6 @@
     </div>
   </aside>
 
-  <script src="/static/js/main.js"></script>
+  <script src="/static/js/main.js?v={{ js_version or '2.2' }}"></script>
 </body>
 </html>

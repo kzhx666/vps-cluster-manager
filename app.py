@@ -615,8 +615,8 @@ def deploy_server_worker(task_id, server_id):
         push_token = global_cfg.get("push_token", "")
         auto_push = 1 if global_cfg.get("auto_push", True) else 0
 
-        tag_main = server.get("tag_main", "").strip() or server_name
-        tag_argo = server.get("tag_argo", "").strip() or f"{tag_main}-Argo"
+        tag_main = server.get("tag_main", "").strip() or f"{server_name}本机"
+        tag_argo = server.get("tag_argo", "").strip() or f"{server_name}优选"
 
         custom_domain = server.get("domain", "").strip()
         cf_dns_token = global_cfg.get("cf_dns_token", "").strip()
@@ -730,7 +730,7 @@ rm -f /tmp/sb_install.sh
 # ------------------------------------------------------------------------------
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', js_version=int(time.time()))
 
 # ------------------------------------------------------------------------------
 # Routes: Config Management
@@ -784,17 +784,21 @@ def add_server():
         return jsonify({"success": False, "message": "VPS IP 或域名不能为空"}), 400
 
     server_id = str(uuid.uuid4())
+    srv_name = (data.get('name') or host).strip()
+    tag_main = (data.get('tag_main') or '').strip() or f"{srv_name}本机"
+    tag_argo = (data.get('tag_argo') or '').strip() or f"{srv_name}优选"
+
     server = {
         "id": server_id,
-        "name": (data.get('name') or host).strip(),
+        "name": srv_name,
         "host": host,
         "port": int(data.get('port') or 22),
         "user": (data.get('user') or 'root').strip(),
         "auth_type": data.get('auth_type', 'password'),
         "password": data.get('password', ''),
         "private_key": data.get('private_key', ''),
-        "tag_main": data.get('tag_main', '').strip(),
-        "tag_argo": data.get('tag_argo', '').strip(),
+        "tag_main": tag_main,
+        "tag_argo": tag_argo,
         "port_mode": data.get('port_mode', 'auto'),
         "port_range": data.get('port_range', '').strip(),
         "domain": data.get('domain', '').strip(),
@@ -815,7 +819,7 @@ def add_server():
 def update_server(server_id):
     data = request.get_json() or {}
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
@@ -832,8 +836,19 @@ def update_server(server_id):
                 server[field] = bool(data[field])
             elif field == 'argo_token':
                 server[field] = clean_argo_token(data[field])
+            elif field == 'name':
+                server['name'] = str(data['name']).strip() or server.get('host', '')
+            elif field == 'tag_main':
+                server['tag_main'] = str(data['tag_main']).strip() or f"{server.get('name', server.get('host'))}本机"
+            elif field == 'tag_argo':
+                server['tag_argo'] = str(data['tag_argo']).strip() or f"{server.get('name', server.get('host'))}优选"
             else:
                 server[field] = data[field]
+
+    if not server.get('tag_main'):
+        server['tag_main'] = f"{server.get('name', server.get('host'))}本机"
+    if not server.get('tag_argo'):
+        server['tag_argo'] = f"{server.get('name', server.get('host'))}优选"
 
     save_config(cfg)
     return jsonify({"success": True, "data": server})

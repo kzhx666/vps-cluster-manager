@@ -577,6 +577,24 @@ document.addEventListener('DOMContentLoaded', () => {
     srvArgoToken.addEventListener('blur', handleArgoTokenCleanup);
   }
 
+  // Auto-sync tags from VPS Name/Host (VPS名+本机, VPS名+优选)
+  const srvNameEl = document.getElementById('srv-name');
+  const srvHostEl = document.getElementById('srv-host');
+  const srvTagMainEl = document.getElementById('srv-tag-main');
+  const srvTagArgoEl = document.getElementById('srv-tag-argo');
+
+  function syncTagInputs() {
+    const base = srvNameEl.value.trim() || (srvHostEl ? srvHostEl.value.trim() : '');
+    if (base) {
+      srvTagMainEl.value = base + '本机';
+      srvTagArgoEl.value = base + '优选';
+    }
+  }
+  srvNameEl?.addEventListener('input', syncTagInputs);
+  srvHostEl?.addEventListener('input', () => {
+    if (!srvNameEl.value.trim()) syncTagInputs();
+  });
+
   // Auth type toggle
   const srvAuthType = document.getElementById('srv-auth-type');
   if (srvAuthType) {
@@ -690,8 +708,9 @@ function openServerModal(serverId = null) {
   document.getElementById('edit-server-id').value = serverId || '';
 
   if (isEdit) {
-    const server = (state.config.servers || []).find(s => s.id === serverId);
+    const server = (state.config.servers || []).find(s => String(s.id) === String(serverId));
     if (!server) return;
+    const baseName = server.name || server.host || '';
     document.getElementById('srv-name').value = server.name || '';
     document.getElementById('srv-host').value = server.host || '';
     document.getElementById('srv-port').value = server.port || 22;
@@ -700,8 +719,8 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-password').value = server.password || '';
     document.getElementById('srv-key').value = server.private_key || '';
 
-    document.getElementById('srv-tag-main').value = server.tag_main || '';
-    document.getElementById('srv-tag-argo').value = server.tag_argo || '';
+    document.getElementById('srv-tag-main').value = server.tag_main || (baseName ? baseName + '本机' : '');
+    document.getElementById('srv-tag-argo').value = server.tag_argo || (baseName ? baseName + '优选' : '');
 
     document.getElementById('srv-port-mode').value = server.port_mode || 'auto';
     document.getElementById('srv-port-range').value = server.port_range || '';
@@ -792,37 +811,51 @@ function updateNatPreview() {
 }
 
 async function saveServer() {
-  const serverId = document.getElementById('edit-server-id').value;
-  const isEdit = !!serverId;
-  const host = document.getElementById('srv-host').value.trim();
-
-  if (!host) {
-    showToast('请输入 VPS IP 或域名', 'error');
-    return;
+  const saveBtn = document.getElementById('btn-save-server');
+  const origBtnText = saveBtn ? saveBtn.innerHTML : '保存服务器';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="status-dot pulsing" style="margin-right:4px;"></span>保存中...';
   }
 
-  const payload = {
-    name: document.getElementById('srv-name').value.trim() || host,
-    host: host,
-    port: parseInt(document.getElementById('srv-port').value) || 22,
-    user: document.getElementById('srv-user').value.trim() || 'root',
-    auth_type: document.getElementById('srv-auth-type').value,
-    password: document.getElementById('srv-password').value,
-    private_key: document.getElementById('srv-key').value,
-    tag_main: document.getElementById('srv-tag-main').value.trim(),
-    tag_argo: document.getElementById('srv-tag-argo').value.trim(),
-    port_mode: document.getElementById('srv-port-mode').value,
-    port_range: document.getElementById('srv-port-range').value.trim(),
-    domain: document.getElementById('srv-domain').value.trim(),
-    reality_sni: document.getElementById('srv-reality-sni').value.trim(),
-    argo_enabled: document.getElementById('srv-argo-enabled').checked,
-    argo_domain: document.getElementById('srv-argo-domain').value.trim(),
-    argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)
-  };
-
-  const endpoint = isEdit ? `/api/server/update/${serverId}` : '/api/server/add';
-
   try {
+    const serverId = (document.getElementById('edit-server-id').value || '').trim();
+    const isEdit = !!serverId;
+    const host = document.getElementById('srv-host').value.trim();
+
+    if (!host) {
+      showToast('请输入 VPS IP 或域名', 'error');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = origBtnText; }
+      return;
+    }
+
+    const srvName = document.getElementById('srv-name').value.trim() || host;
+    let tagMain = document.getElementById('srv-tag-main').value.trim();
+    let tagArgo = document.getElementById('srv-tag-argo').value.trim();
+    if (!tagMain) tagMain = srvName + '本机';
+    if (!tagArgo) tagArgo = srvName + '优选';
+
+    const payload = {
+      name: srvName,
+      host: host,
+      port: parseInt(document.getElementById('srv-port').value) || 22,
+      user: document.getElementById('srv-user').value.trim() || 'root',
+      auth_type: document.getElementById('srv-auth-type').value,
+      password: document.getElementById('srv-password').value,
+      private_key: document.getElementById('srv-key').value,
+      tag_main: tagMain,
+      tag_argo: tagArgo,
+      port_mode: document.getElementById('srv-port-mode').value,
+      port_range: document.getElementById('srv-port-range').value.trim(),
+      domain: document.getElementById('srv-domain').value.trim(),
+      reality_sni: document.getElementById('srv-reality-sni').value.trim(),
+      argo_enabled: document.getElementById('srv-argo-enabled').checked,
+      argo_domain: document.getElementById('srv-argo-domain').value.trim(),
+      argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)
+    };
+
+    const endpoint = isEdit ? `/api/server/update/${serverId}` : '/api/server/add';
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -832,18 +865,26 @@ async function saveServer() {
     if (data.success) {
       showToast(isEdit ? 'VPS 配置更新成功！' : 'VPS 添加成功！', 'success');
       closeModal('modal-server-edit');
-      loadConfig();
+      await loadConfig();
     } else {
       showToast(`保存失败: ${data.message}`, 'error');
     }
   } catch (err) {
     showToast(`保存出错: ${err.message}`, 'error');
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = origBtnText;
+    }
   }
 }
+window.saveServer = saveServer;
+window.openServerModal = openServerModal;
 
 function editServer(serverId) {
   openServerModal(serverId);
 }
+window.editServer = editServer;
 
 async function deleteServer(serverId) {
   const s = (state.config.servers || []).find(i => i.id === serverId);
