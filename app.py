@@ -1196,73 +1196,256 @@ echo "UNLOCK_RES:{\"openai\":\"$OPENAI_CODE\",\"youtube\":\"$YT_CODE\",\"netflix
 # ------------------------------------------------------------------------------
 # Routes: Batch Import & Export
 # ------------------------------------------------------------------------------
-@app.route('/api/batch_import', methods=['POST'])
-def batch_import():
-    data = request.get_json() or {}
-    text = data.get("text", "")
-    lines = text.strip().splitlines()
+def is_ip_or_domain(val: str) -> bool:
+    val = val.strip()
+    parts = val.split('.')
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        return True
+    if ':' in val or re.match(r'^[a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-zA-Z]{2,}$', val):
+        return True
+    return False
 
-    imported = []
-    cfg = load_config()
-    existing_hosts = {s.get("host") for s in cfg.get("servers", [])}
+def parse_import_line(line: str, name_prefix: str = "", index: int = 1, total_count: int = 1):
+    line = line.strip()
+    if not line or line.startswith('#'):
+        return None
 
-    for line in lines:
+    custom_name = ""
+    host, port, user, pwd = "", 22, "root", ""
+
+    if '#' in line and not line.startswith('#'):
+        custom_name, line = line.split('#', 1)
+        custom_name = custom_name.strip()
         line = line.strip()
-        if not line or line.startswith('#'):
-            continue
 
-        # Format 1: host:port:user:password
-        # Format 2: host:password (default port 22, user root)
-        # Format 3: user:password@host:port
-        # Format 4: host port user password (space delimited)
-        host, port, user, pwd = "", 22, "root", ""
+    if "@" in line:
+        auth_part, host_part = line.split("@", 1)
+        if ":" in auth_part:
+            aparts = auth_part.split(":")
+            if len(aparts) == 3 and not is_ip_or_domain(aparts[0]):
+                custom_name, user, pwd = aparts[0], aparts[1], aparts[2]
+            else:
+                user, pwd = aparts[0], ":".join(aparts[1:])
+        else:
+            user = auth_part
 
-        if "@" in line:
-            # user:pwd@host:port
-            auth_part, host_part = line.split("@", 1)
-            if ":" in auth_part:
-                user, pwd = auth_part.split(":", 1)
+        if ":" in host_part:
+            hparts = host_part.split(":")
+            host = hparts[0]
+            port = int(hparts[1]) if hparts[1].isdigit() else 22
+            if len(hparts) >= 3 and not custom_name:
+                custom_name = ":".join(hparts[2:])
+        else:
+            host = host_part
+
+    elif ":" in line:
+        parts = [p.strip() for p in line.split(":")]
+        if len(parts) >= 5:
+            if not is_ip_or_domain(parts[0]) and is_ip_or_domain(parts[1]):
+                custom_name = parts[0]
+                host = parts[1]
+                port = int(parts[2]) if parts[2].isdigit() else 22
+                user = parts[3]
+                pwd = ":".join(parts[4:])
+            elif is_ip_or_domain(parts[0]):
+                host = parts[0]
+                port = int(parts[1]) if parts[1].isdigit() else 22
+                user = parts[2]
+                pwd = parts[3]
+                custom_name = ":".join(parts[4:])
             else:
-                user = auth_part
-            if ":" in host_part:
-                host, port_str = host_part.split(":", 1)
+                custom_name = parts[0]
+                host = parts[1]
+                port = int(parts[2]) if parts[2].isdigit() else 22
+                user = parts[3]
+                pwd = ":".join(parts[4:])
+        elif len(parts) == 4:
+            if not is_ip_or_domain(parts[0]) and is_ip_or_domain(parts[1]):
+                custom_name, host, port_str, pwd = parts[0], parts[1], parts[2], parts[3]
                 port = int(port_str) if port_str.isdigit() else 22
-            else:
-                host = host_part
-        elif ":" in line:
-            parts = line.split(":")
-            if len(parts) >= 4:
-                host, port_str, user, pwd = parts[0], parts[1], parts[2], ":".join(parts[3:])
-                port = int(port_str) if port_str.isdigit() else 22
-            elif len(parts) == 2:
-                host, pwd = parts[0], parts[1]
-                port = 22
                 user = "root"
-            elif len(parts) == 3:
+            else:
+                host, port_str, user, pwd = parts[0], parts[1], parts[2], parts[3]
+                port = int(port_str) if port_str.isdigit() else 22
+        elif len(parts) == 3:
+            if not is_ip_or_domain(parts[0]) and is_ip_or_domain(parts[1]):
+                custom_name, host, pwd = parts[0], parts[1], parts[2]
+                port, user = 22, "root"
+            else:
                 host, port_str, pwd = parts[0], parts[1], parts[2]
                 port = int(port_str) if port_str.isdigit() else 22
                 user = "root"
-        else:
-            parts = line.split()
-            if len(parts) >= 4:
-                host, port_str, user, pwd = parts[0], parts[1], parts[2], parts[3]
+        elif len(parts) == 2:
+            host, pwd = parts[0], parts[1]
+            port, user = 22, "root"
+    else:
+        parts = line.split()
+        if len(parts) >= 5:
+            if not is_ip_or_domain(parts[0]) and is_ip_or_domain(parts[1]):
+                custom_name, host, port_str, user, pwd = parts[0], parts[1], parts[2], parts[3], parts[4]
                 port = int(port_str) if port_str.isdigit() else 22
-            elif len(parts) == 2:
-                host, pwd = parts[0], parts[1]
+            else:
+                host, port_str, user, pwd, custom_name = parts[0], parts[1], parts[2], parts[3], " ".join(parts[4:])
+                port = int(port_str) if port_str.isdigit() else 22
+        elif len(parts) == 4:
+            host, port_str, user, pwd = parts[0], parts[1], parts[2], parts[3]
+            port = int(port_str) if port_str.isdigit() else 22
+        elif len(parts) == 3:
+            host, port_str, pwd = parts[0], parts[1], parts[2]
+            port = int(port_str) if port_str.isdigit() else 22
+        elif len(parts) == 2:
+            host, pwd = parts[0], parts[1]
 
-        if not host:
+    if not host:
+        return None
+
+    if custom_name:
+        final_name = custom_name.strip()
+    elif name_prefix.strip():
+        prefix = name_prefix.strip()
+        final_name = prefix if total_count == 1 else f"{prefix}-{index}"
+    else:
+        final_name = f"VPS-{host.split('.')[-1] if '.' in host else host[:6]}"
+
+    return {
+        "name": final_name,
+        "host": host.strip(),
+        "port": port,
+        "user": user.strip(),
+        "password": pwd.strip()
+    }
+
+def test_ssh_connectivity(host, port=22, user="root", pwd="", key="", timeout=7):
+    """Test SSH connectivity and return latency and OS info."""
+    start_t = time.time()
+    runner = SSHRunner(host, port, user, pwd, key, timeout=timeout)
+    try:
+        runner.connect()
+        latency = round((time.time() - start_t) * 1000, 1)
+        code, out = runner.run_cmd("cat /etc/os-release 2>/dev/null | grep -E '^(PRETTY_NAME|NAME)=' | head -n1 | cut -d= -f2 | tr -d '\"' || uname -sr", timeout=5)
+        os_info = out.strip() if out and code == 0 else "Linux"
+        return {
+            "success": True,
+            "latency": latency,
+            "os_info": os_info,
+            "message": "连接正常"
+        }
+    except Exception as e:
+        latency = round((time.time() - start_t) * 1000, 1)
+        err_msg = str(e)
+        if "Authentication failed" in err_msg or "password" in err_msg.lower():
+            friendly_err = "认证失败 (密码错误)"
+        elif "timed out" in err_msg.lower() or "timeout" in err_msg.lower():
+            friendly_err = "连接超时 (端口未响应)"
+        elif "Connection refused" in err_msg:
+            friendly_err = "连接被拒 (端口未开放)"
+        else:
+            friendly_err = f"连接失败: {err_msg[:30]}"
+        return {
+            "success": False,
+            "latency": latency,
+            "os_info": "",
+            "message": friendly_err
+        }
+    finally:
+        runner.close()
+
+@app.route('/api/batch_test_connection', methods=['POST'])
+def batch_test_connection():
+    data = request.get_json() or {}
+    text = data.get("text", "")
+    name_prefix = data.get("name_prefix", "").strip()
+
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip() and not l.strip().startswith('#')]
+    parsed_items = []
+    for idx, line in enumerate(lines, 1):
+        item = parse_import_line(line, name_prefix=name_prefix, index=idx, total_count=len(lines))
+        if item:
+            parsed_items.append(item)
+
+    if not parsed_items:
+        return jsonify({"success": False, "message": "未能识别出有效的 VPS 主机条目，请检查输入格式"}), 400
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def worker(item):
+        res = test_ssh_connectivity(
+            host=item["host"],
+            port=item["port"],
+            user=item["user"],
+            pwd=item["password"],
+            timeout=7
+        )
+        return {
+            "name": item["name"],
+            "host": item["host"],
+            "port": item["port"],
+            "user": item["user"],
+            "password": item["password"],
+            "success": res["success"],
+            "latency": res.get("latency", 0),
+            "os_info": res.get("os_info", ""),
+            "message": res.get("message", "")
+        }
+
+    with ThreadPoolExecutor(max_workers=min(12, len(parsed_items))) as executor:
+        results = list(executor.map(worker, parsed_items))
+
+    success_count = sum(1 for r in results if r["success"])
+    fail_count = len(results) - success_count
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "total": len(results),
+        "success_count": success_count,
+        "fail_count": fail_count
+    })
+
+@app.route('/api/batch_import', methods=['POST'])
+def batch_import():
+    data = request.get_json() or {}
+    items = data.get("items")
+    text = data.get("text", "")
+    name_prefix = data.get("name_prefix", "").strip()
+
+    to_import = []
+    if isinstance(items, list) and items:
+        for it in items:
+            if it.get("host"):
+                to_import.append(it)
+    elif text:
+        lines = [l.strip() for l in text.strip().splitlines() if l.strip() and not l.strip().startswith('#')]
+        for idx, line in enumerate(lines, 1):
+            parsed = parse_import_line(line, name_prefix=name_prefix, index=idx, total_count=len(lines))
+            if parsed:
+                to_import.append(parsed)
+
+    if not to_import:
+        return jsonify({"success": False, "message": "未能识别出有效的 VPS 主机条目"}), 400
+
+    cfg = load_config()
+    existing_hosts = {(s.get("host"), int(s.get("port", 22))) for s in cfg.get("servers", [])}
+
+    imported = []
+    skipped = 0
+    for item in to_import:
+        host = item.get("host")
+        port = int(item.get("port", 22))
+        if (host, port) in existing_hosts:
+            skipped += 1
             continue
 
         server_id = str(uuid.uuid4())
-        alias = f"VPS-{host.split('.')[-1] if '.' in host else host[:6]}"
+        alias = item.get("name") or f"VPS-{host.split('.')[-1] if '.' in host else host[:6]}"
         new_server = {
             "id": server_id,
             "name": alias,
             "host": host,
             "port": port,
-            "user": user,
+            "user": item.get("user", "root"),
             "auth_type": "password",
-            "password": pwd,
+            "password": item.get("password", ""),
             "private_key": "",
             "tag_main": alias,
             "tag_argo": f"{alias}-Argo",
@@ -1272,14 +1455,25 @@ def batch_import():
             "argo_enabled": False,
             "argo_domain": "",
             "argo_token": "",
-            "status": "idle",
+            "status": "online" if item.get("success") else "idle",
+            "latency": item.get("latency", 0),
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
+        if item.get("os_info"):
+            new_server["last_check_result"] = {
+                "os": item["os_info"],
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
         cfg["servers"].append(new_server)
+        existing_hosts.add((host, port))
         imported.append(new_server)
 
     save_config(cfg)
-    return jsonify({"success": True, "count": len(imported), "imported": imported})
+    msg = f"成功导入 {len(imported)} 台 VPS！"
+    if skipped > 0:
+        msg += f" (已跳过 {skipped} 台重复主机)"
+    return jsonify({"success": True, "count": len(imported), "skipped": skipped, "message": msg, "imported": imported})
 
 @app.route('/api/export', methods=['GET'])
 def export_config():

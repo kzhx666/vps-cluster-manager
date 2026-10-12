@@ -511,28 +511,63 @@
 # 格式 2: IP:密码 (默认端口 22, 用户 root)
 # 格式 3: 用户:密码@IP:端口 (例如: root:MyPass123@1.2.3.4:22022)
 # 格式 4: IP 端口 用户 密码 (空格分隔)
-1.2.3.4:22:root:Password123
-5.6.7.8:22022:root:SecPass456
+# 格式 5: 自定义名称:IP:端口:用户:密码 (例如: 香港1区:1.2.3.4:22:root:Pass123)
+# 格式 6: IP:端口:用户:密码:自定义名称 (例如: 1.2.3.4:22:root:Pass123:香港1区)
           </div>
         </div>
+
+        <div class="form-group">
+          <label for="batch-import-name">统一服务器名称 / 前缀 (可选)：</label>
+          <input type="text" id="batch-import-name" placeholder="例如: 哈基猫 或 美国2区 (多台自动命名为 名称-1、名称-2；留空默认按IP命名)">
+          <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
+            💡 若单行文本内未指定名称，将自动使用此名称并递增编号；若单行已包含名称则优先使用单行名称。
+          </small>
+        </div>
+
         <div class="form-group">
           <label for="batch-import-text">在此粘贴多行文本：</label>
-          <textarea id="batch-import-text" rows="8" placeholder="在此粘贴你的 VPS 列表..."></textarea>
+          <textarea id="batch-import-text" rows="6" placeholder="在此粘贴你的 VPS 列表..."></textarea>
         </div>
-        <div id="batch-preview-container" style="display:none;" class="batch-preview-container">
-          <h4>解析预览 (共 <span id="batch-preview-count">0</span> 台):</h4>
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead><tr><th>别名</th><th>主机 IP</th><th>SSH 端口</th><th>用户</th><th>认证</th></tr></thead>
-              <tbody id="batch-preview-tbody"></tbody>
+
+        <!-- 连通性测试结果面板 -->
+        <div id="batch-test-container" style="display:none; margin-top:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-weight:600; font-size:0.9rem;">SSH 连通性测试结果</span>
+              <span id="batch-test-badge" class="badge badge-info">检测中...</span>
+            </div>
+            <div id="batch-test-summary" style="font-size:0.8rem; color:var(--text-dim);"></div>
+          </div>
+          <div style="max-height:240px; overflow-y:auto; border:1px solid var(--border-color); border-radius:8px;">
+            <table class="data-table" style="width:100%; font-size:0.8rem; border-collapse:collapse;">
+              <thead>
+                <tr style="position:sticky; top:0; background:var(--bg-card); z-index:1;">
+                  <th style="width:40px; text-align:center;">#</th>
+                  <th>服务器名称</th>
+                  <th>主机地址</th>
+                  <th>用户</th>
+                  <th>连通状态</th>
+                  <th>系统 / 响应时延</th>
+                </tr>
+              </thead>
+              <tbody id="batch-test-tbody"></tbody>
             </table>
           </div>
         </div>
       </div>
 
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modal-batch-import')">取消</button>
-        <button id="btn-do-batch-import" class="btn btn-primary">确认导入全部</button>
+      <div class="modal-footer" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <button id="btn-batch-test" class="btn btn-secondary" style="border-color:var(--color-cyan); color:var(--color-cyan);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span id="btn-batch-test-text">连通性测试</span>
+          </button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary" onclick="closeModal('modal-batch-import')">取消</button>
+          <button id="btn-do-batch-import-valid" class="btn btn-success" style="display:none;">仅导入连通成功 (<span id="batch-valid-count">0</span>台)</button>
+          <button id="btn-do-batch-import" class="btn btn-primary">确认导入全部</button>
+        </div>
       </div>
     </div>
   </div>

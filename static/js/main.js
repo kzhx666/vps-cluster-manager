@@ -493,10 +493,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-batch-import')?.addEventListener('click', () => {
     document.getElementById('batch-import-text').value = '';
-    document.getElementById('batch-preview-container').style.display = 'none';
+    const nameEl = document.getElementById('batch-import-name');
+    if (nameEl) nameEl.value = '';
+    const testContainer = document.getElementById('batch-test-container');
+    if (testContainer) testContainer.style.display = 'none';
+    const validBtn = document.getElementById('btn-do-batch-import-valid');
+    if (validBtn) validBtn.style.display = 'none';
+    const testBtn = document.getElementById('btn-batch-test');
+    if (testBtn) {
+      testBtn.disabled = false;
+      document.getElementById('btn-batch-test-text').textContent = '连通性测试';
+    }
+    state.testedBatchItems = null;
     openModal('modal-batch-import');
   });
-  document.getElementById('btn-do-batch-import')?.addEventListener('click', doBatchImport);
+  document.getElementById('btn-batch-test')?.addEventListener('click', doBatchConnectivityTest);
+  document.getElementById('btn-do-batch-import')?.addEventListener('click', () => doBatchImport(false));
+  document.getElementById('btn-do-batch-import-valid')?.addEventListener('click', () => doBatchImport(true));
 
   document.getElementById('btn-deploy-all')?.addEventListener('click', deployAllServers);
   document.getElementById('btn-inspect-all')?.addEventListener('click', inspectAllServers);
@@ -1166,22 +1179,136 @@ async function triggerBatchOp(action, targetIds = null) {
 }
 window.triggerBatchOp = triggerBatchOp;
 
-async function doBatchImport() {
+async function doBatchConnectivityTest() {
   const text = document.getElementById('batch-import-text').value.trim();
+  const namePrefix = document.getElementById('batch-import-name').value.trim();
+  if (!text) {
+    showToast('请先粘贴 VPS 列表文本', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btn-batch-test');
+  const btnText = document.getElementById('btn-batch-test-text');
+  const container = document.getElementById('batch-test-container');
+  const tbody = document.getElementById('batch-test-tbody');
+  const badge = document.getElementById('batch-test-badge');
+  const summaryEl = document.getElementById('batch-test-summary');
+  const validBtn = document.getElementById('btn-do-batch-import-valid');
+
+  container.style.display = 'block';
+  badge.className = 'badge badge-info';
+  badge.textContent = '测试握手中...';
+  summaryEl.textContent = '正在并发建立 SSH 连接并测试连通性...';
+  tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--text-dim);"><span class="status-dot pulsing" style="margin-right:6px;"></span>正在并发测试主机连通性并识别系统架构...</td></tr>`;
+
+  btn.disabled = true;
+  btnText.textContent = '正在测试...';
+  if (validBtn) validBtn.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/batch_test_connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, name_prefix: namePrefix })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      showToast(data.message || '连通性测试失败', 'error');
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:12px; color:var(--color-danger);">${escapeHtml(data.message)}</td></tr>`;
+      badge.className = 'badge badge-danger';
+      badge.textContent = '解析异常';
+      return;
+    }
+
+    state.testedBatchItems = data.results;
+    badge.className = data.fail_count === 0 ? 'badge badge-success' : (data.success_count === 0 ? 'badge badge-danger' : 'badge badge-warning');
+    badge.textContent = `测试完成 (${data.success_count}/${data.total} 成功)`;
+    summaryEl.innerHTML = `共 <strong>${data.total}</strong> 台：<span style="color:var(--color-success); font-weight:600;">${data.success_count} 台成功</span>，<span style="color:var(--color-danger);">${data.fail_count} 台失败</span>`;
+
+    if (data.results && data.results.length > 0) {
+      let rowsHtml = '';
+      data.results.forEach((r, idx) => {
+        const isOk = !!r.success;
+        const statusHtml = isOk
+          ? `<span class="badge badge-success" style="display:inline-flex; align-items:center; gap:4px;"><span class="status-dot"></span>连通正常</span>`
+          : `<span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:4px;"><span class="status-dot"></span>${escapeHtml(r.message || '连接失败')}</span>`;
+        const metricHtml = isOk
+          ? `<span style="color:var(--color-cyan); font-weight:600;">${r.latency}ms</span> <span style="color:var(--text-dim); font-size:0.75rem;">(${escapeHtml(r.os_info || 'Linux')})</span>`
+          : `<span style="color:var(--text-dim);">-</span>`;
+
+        rowsHtml += `
+          <tr style="border-bottom:1px solid rgba(255,255,255,0.05);">
+            <td style="text-align:center; color:var(--text-dim);">${idx + 1}</td>
+            <td style="font-weight:600; color:var(--color-cyan);">${escapeHtml(r.name)}</td>
+            <td style="font-family:var(--font-mono);">${escapeHtml(r.host)}:${r.port}</td>
+            <td>${escapeHtml(r.user)}</td>
+            <td>${statusHtml}</td>
+            <td>${metricHtml}</td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = rowsHtml;
+    }
+
+    if (data.success_count > 0 && data.fail_count > 0) {
+      if (validBtn) {
+        document.getElementById('batch-valid-count').textContent = data.success_count;
+        validBtn.style.display = 'inline-block';
+      }
+    } else {
+      if (validBtn) validBtn.style.display = 'none';
+    }
+
+    if (data.fail_count === 0) {
+      showToast(`所有 ${data.total} 台 VPS 连通性测试全部通过！`, 'success');
+    } else if (data.success_count > 0) {
+      showToast(`连通性测试完成：${data.success_count} 台成功，${data.fail_count} 台失败`, 'warning');
+    } else {
+      showToast(`所有 ${data.total} 台 VPS 均连接失败，请核对端口与密码`, 'error');
+    }
+  } catch (err) {
+    showToast(`连通性测试请求异常: ${err.message}`, 'error');
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:12px; color:var(--color-danger);">请求出错: ${escapeHtml(err.message)}</td></tr>`;
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = '重新测试';
+  }
+}
+
+async function doBatchImport(onlyValid = false) {
+  const text = document.getElementById('batch-import-text').value.trim();
+  const namePrefix = document.getElementById('batch-import-name').value.trim();
   if (!text) {
     showToast('请粘贴 VPS 列表文本', 'error');
     return;
+  }
+
+  let payload = {};
+  if (state.testedBatchItems && state.testedBatchItems.length > 0) {
+    if (onlyValid) {
+      const validItems = state.testedBatchItems.filter(i => i.success);
+      if (validItems.length === 0) {
+        showToast('没有测试成功的 VPS 可导入', 'warning');
+        return;
+      }
+      payload.items = validItems;
+    } else {
+      payload.items = state.testedBatchItems;
+    }
+  } else {
+    payload.text = text;
+    payload.name_prefix = namePrefix;
   }
 
   try {
     const res = await fetch('/api/batch_import', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify(payload)
     });
     const data = await res.json();
     if (data.success) {
-      showToast(`成功解析并导入 ${data.count} 台 VPS！`, 'success');
+      showToast(data.message || `成功导入 ${data.count} 台 VPS！`, 'success');
       closeModal('modal-batch-import');
       loadConfig();
     } else {
