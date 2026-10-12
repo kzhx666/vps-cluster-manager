@@ -4,9 +4,9 @@ services:
     container_name: vps-cluster-manager
     restart: always
     ports:
-      - "5005:5005"
+      - "5001:5001"
     volumes:
       - ./data:/app/data
     environment:
-      - PORT=5005
+      - PORT=5001
       - HOST=0.0.0.0

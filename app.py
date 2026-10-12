@@ -1487,7 +1487,7 @@ inspector_thread.start()
 # Entrypoint
 # ------------------------------------------------------------------------------
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5005))
+    port = int(os.environ.get('PORT', 5001))
     host = os.environ.get('HOST', '0.0.0.0')
     print(f"==================================================================")
     print(f"  多 VPS 集群一键批量安装与巡检控制台 (vps-cluster-manager)")

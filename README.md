@@ -78,24 +78,35 @@
 
 ---
 
-## 🛠️ 快速启动
+## 🛠️ 快速启动（默认安装到 /opt 目录，端口 5001）
 
-### 方式一：Docker Compose（推荐，一行命令）
+### 方式一：Linux 一键安装脚本（推荐，自动注册开机自启）
 
 ```bash
-cd vps-cluster-manager
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/kzhx666/vps-cluster-manager/main/install.sh | bash
 ```
-打开浏览器访问：`http://你的服务器IP:5005`
+> 安装完成后可直接使用快捷命令管理：`vps-cluster-manager start/stop/restart/status/logs/update/uninstall`。
 
-### 方式二：Python 原生运行
+### 方式二：Docker Compose（推荐）
 
 ```bash
-cd vps-cluster-manager
+mkdir -p /opt && cd /opt
+git clone https://github.com/kzhx666/vps-cluster-manager.git
+cd /opt/vps-cluster-manager
+docker compose up -d --build
+```
+打开浏览器访问：`http://你的服务器IP:5001`
+
+### 方式三：Python 原生直接运行
+
+```bash
+mkdir -p /opt && cd /opt
+git clone https://github.com/kzhx666/vps-cluster-manager.git
+cd /opt/vps-cluster-manager
 pip install -r requirements.txt
 python app.py
 ```
-默认监听 `http://0.0.0.0:5005`（端口可通过环境变量 `PORT` 修改）。
+默认监听 `http://0.0.0.0:5001`（端口可通过环境变量 `PORT` 修改）。
 
 ---
 
@@ -104,16 +115,17 @@ python app.py
 ```
 vps-cluster-manager/
 ├── app.py                     # Flask 后端核心，多线程 SSH 部署引擎与 API
+├── install.sh                 # Linux 一键安装与系统服务注册脚本 (默认装到 /opt)
 ├── requirements.txt           # Python 核心依赖 (Flask, paramiko, requests)
 ├── Dockerfile                 # 容器构建配置
-├── docker-compose.yml         # 容器一键编排
+├── docker-compose.yml         # 容器一键编排 (映射 5001 端口)
 ├── data/                      # 持久化存储目录
 │   └── config.json            # 集群服务器凭据与全局策略
 ├── static/
 │   ├── css/
 │   │   └── style.css          # Cyber Dark 现代毛玻璃 UI 样式库
 │   └── js/
-│       └── main.js            # 响应式交互、实时终端日志轮询引擎
+│       └── main.js            # 响应式交互、多选与实时终端日志轮询引擎
 ├── templates/
 │   └── index.html             # 单页管理控制台
 └── README.md                  # 项目使用与配置说明文档
