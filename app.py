@@ -795,6 +795,20 @@ def delete_server(server_id):
     save_config(cfg)
     return jsonify({"success": True})
 
+@app.route('/api/server/batch_delete', methods=['POST'])
+def batch_delete_servers():
+    data = request.get_json() or {}
+    sids = data.get('server_ids', [])
+    if not sids:
+        return jsonify({"success": False, "message": "未选定任何 VPS"}), 400
+    with config_lock:
+        cur = load_config()
+        original_count = len(cur.get("servers", []))
+        cur["servers"] = [s for s in cur.get("servers", []) if s.get("id") not in sids]
+        deleted_count = original_count - len(cur["servers"])
+        save_config_unlocked(cur)
+    return jsonify({"success": True, "message": f"已成功从集群管理面板移除 {deleted_count} 台 VPS", "count": deleted_count})
+
 # ------------------------------------------------------------------------------
 # Routes: Pre-flight Check & Deployment Tasks
 # ------------------------------------------------------------------------------
@@ -884,10 +898,14 @@ def deploy_server(server_id):
 
 @app.route('/api/deploy_all', methods=['POST'])
 def deploy_all():
+    data = request.get_json(silent=True) or {}
+    req_sids = data.get('server_ids', [])
     cfg = load_config()
     servers = cfg.get("servers", [])
+    if req_sids:
+        servers = [s for s in servers if s.get("id") in req_sids]
     if not servers:
-        return jsonify({"success": False, "message": "当前集群没有 VPS"}), 400
+        return jsonify({"success": False, "message": "当前没有选定任何 VPS 或集群列表为空"}), 400
 
     task_ids = []
     concurrency = int(cfg.get("global", {}).get("concurrency", 5))
@@ -1029,10 +1047,14 @@ def inspect_single(server_id):
 
 @app.route('/api/inspect_all', methods=['POST'])
 def inspect_all():
+    data = request.get_json(silent=True) or {}
+    req_sids = data.get('server_ids', [])
     cfg = load_config()
     servers = cfg.get("servers", [])
+    if req_sids:
+        servers = [s for s in servers if s.get("id") in req_sids]
     if not servers:
-        return jsonify({"success": False, "message": "集群中暂无 VPS"}), 400
+        return jsonify({"success": False, "message": "当前没有选定任何 VPS 或集群列表为空"}), 400
 
     def run_all_inspect():
         for s in servers:
@@ -1322,17 +1344,76 @@ echo "BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)+$(sysctl -n 
                         success_count += 1
                     elif action == "uninstall":
                         cmd = r'''
-systemctl stop sing-box 2>/dev/null || rc-service sing-box stop 2>/dev/null || true
-systemctl disable sing-box 2>/dev/null || rc-update del sing-box default 2>/dev/null || true
-systemctl stop cloudflared 2>/dev/null || rc-service cloudflared stop 2>/dev/null || true
-pkill -f sing-box 2>/dev/null || true
-pkill -f cloudflared 2>/dev/null || true
-rm -rf /etc/sing-box /usr/local/bin/sing-box /usr/local/bin/sb /usr/local/bin/sb-hop.sh /etc/systemd/system/sing-box.service /etc/init.d/sing-box /usr/local/bin/cloudflared
-iptables -t nat -F SB_HOP 2>/dev/null || true
+# 1. 停止并禁用所有相关服务
+systemctl stop sing-box 2>/dev/null || true
+systemctl disable sing-box 2>/dev/null || true
+rc-service sing-box stop 2>/dev/null || true
+rc-update del sing-box default 2>/dev/null || true
+
+systemctl stop cloudflared 2>/dev/null || true
+systemctl disable cloudflared 2>/dev/null || true
+rc-service cloudflared stop 2>/dev/null || true
+rc-update del cloudflared default 2>/dev/null || true
+if command -v cloudflared >/dev/null 2>&1; then
+  cloudflared service uninstall >/dev/null 2>&1 || true
+fi
+
+systemctl stop sb-hop.service 2>/dev/null || true
+systemctl disable sb-hop.service 2>/dev/null || true
+
+pkill -9 -f sing-box 2>/dev/null || true
+pkill -9 -f cloudflared 2>/dev/null || true
+
+# 2. 清理系统服务单元文件
+rm -f /etc/systemd/system/sing-box.service* 2>/dev/null || true
+rm -rf /etc/systemd/system/sing-box.service.d 2>/dev/null || true
+rm -f /etc/systemd/system/cloudflared.service* 2>/dev/null || true
+rm -rf /etc/systemd/system/cloudflared.service.d 2>/dev/null || true
+rm -f /etc/systemd/system/sb-hop.service* 2>/dev/null || true
+rm -f /etc/init.d/sing-box /etc/init.d/cloudflared 2>/dev/null || true
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl reset-failed 2>/dev/null || true
+fi
+
+# 3. 删除二进制可执行文件与快捷脚本
+rm -f /usr/local/bin/sing-box /usr/bin/sing-box 2>/dev/null || true
+rm -f /usr/local/bin/sb /usr/bin/sb 2>/dev/null || true
+rm -f /usr/local/bin/sb-hop.sh /usr/local/bin/sb-selfcheck.sh 2>/dev/null || true
+rm -f /usr/local/bin/cloudflared /usr/bin/cloudflared 2>/dev/null || true
+
+# 4. 删除配置文件、状态文件、证书、日志与临时缓存
+rm -rf /etc/sing-box 2>/dev/null || true
+rm -rf /etc/cloudflared 2>/dev/null || true
+rm -rf /var/log/sing-box* 2>/dev/null || true
+rm -rf /tmp/sb* /tmp/sing-box* /tmp/cloudflared* 2>/dev/null || true
+
+# 5. 清理 Crontab 计划任务残留
+if command -v crontab >/dev/null 2>&1; then
+  crontab -l 2>/dev/null | grep -v 'sing-box' | grep -v 'sb-' | grep -v 'cloudflared' | crontab - 2>/dev/null || true
+fi
+
+# 6. 清理 iptables / ip6tables 端口跳跃规则与链
+if command -v iptables >/dev/null 2>&1; then
+  iptables -t nat -D PREROUTING -p udp -j SB_HOP 2>/dev/null || true
+  iptables -t nat -D PREROUTING -p udp -j SB_HOP 2>/dev/null || true
+  iptables -t nat -F SB_HOP 2>/dev/null || true
+  iptables -t nat -X SB_HOP 2>/dev/null || true
+fi
+if command -v ip6tables >/dev/null 2>&1; then
+  ip6tables -t nat -D PREROUTING -p udp -j SB_HOP6 2>/dev/null || true
+  ip6tables -t nat -D PREROUTING -p udp -j SB_HOP6 2>/dev/null || true
+  ip6tables -t nat -F SB_HOP6 2>/dev/null || true
+  ip6tables -t nat -X SB_HOP6 2>/dev/null || true
+fi
+
+rm -f /etc/sysctl.d/99-singbox-speed.conf 2>/dev/null || true
+sysctl -p 2>/dev/null || true
 echo "UNINSTALLED_OK"
 '''
-                        runner.run_cmd(cmd, timeout=20)
-                        append_task_log(task_id, f"[{name}] Sing-box 服务与配置已清理完毕")
+                        runner.run_cmd(cmd, timeout=30)
+                        append_task_log(task_id, f"[{name}] Sing-box、Argo 隧道、证书与所有关联配置已彻底清理卸载完毕！")
                         success_count += 1
                         with config_lock:
                             cur = load_config()
@@ -1340,6 +1421,7 @@ echo "UNINSTALLED_OK"
                                 if s.get("id") == target_srv.get("id"):
                                     s["status"] = "idle"
                                     s["last_check_result"] = {}
+                                    s["last_deployed"] = "已彻底卸载"
                                     break
                             save_config_unlocked(cur)
                 except Exception as e:

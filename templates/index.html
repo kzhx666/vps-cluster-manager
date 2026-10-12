@@ -146,6 +146,32 @@
         </div>
       </section>
 
+      <!-- Multi-select Controls Toolbar -->
+      <section class="selection-toolbar" id="selection-toolbar">
+        <div class="selection-left">
+          <label class="custom-checkbox-wrapper" title="全选当前匹配的所有 VPS">
+            <input type="checkbox" id="chk-select-all">
+            <span class="custom-checkmark"></span>
+            <span class="selection-label">全选本页</span>
+          </label>
+          <button id="btn-invert-select" class="btn btn-sm btn-ghost" type="button" title="反选当前列表">
+            🔄 反选
+          </button>
+          <span class="selection-status-badge" id="selection-status-badge">已选择 <strong>0</strong> 台 VPS</span>
+        </div>
+        <div class="selection-right" id="selection-quick-actions" style="display: none;">
+          <span class="text-dim text-sm">已选批量操作：</span>
+          <button class="btn btn-sm btn-primary" onclick="deploySelectedServers()" title="并发部署已选主机">🚀 部署已选</button>
+          <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">🩺 巡检</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选 Sing-box">🔄 重启</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级核心">⬆️ 升核心</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新 BBR">⚡ BBR</button>
+          <button class="btn btn-sm btn-danger-outline" onclick="triggerBatchOp('uninstall', getSelectedIds())" title="彻底卸载已选节点的所有组件与服务">🗑️ 彻底卸载</button>
+          <button class="btn btn-sm btn-danger-ghost" onclick="batchDeleteSelected()" title="从面板管理列表中批量移除">❌ 移出面板</button>
+          <button class="btn btn-sm btn-ghost" onclick="clearSelection()" title="取消所有选择">✖️ 取消</button>
+        </div>
+      </section>
+
       <!-- Server Cards Grid -->
       <section class="server-grid-container">
         <div id="server-grid" class="server-grid">
@@ -595,6 +621,42 @@
       </div>
     </div>
   </div>
+
+  <!-- Floating Batch Actions Dock (悬浮多选快捷操作栏) -->
+  <aside id="floating-batch-bar" class="floating-batch-bar" style="display: none;">
+    <div class="floating-batch-container">
+      <div class="floating-batch-info">
+        <span class="floating-badge">已勾选 <strong id="float-selected-count">0</strong> 台 VPS</span>
+      </div>
+      <div class="floating-batch-buttons">
+        <button class="btn btn-sm btn-primary" onclick="deploySelectedServers()" title="并发部署已选主机">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          一键部署
+        </button>
+        <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">
+          🩺 巡检
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选主机 Sing-box 核心">
+          🔄 重启
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心">
+          ⬆️ 升核心
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新激活 BBR+fq">
+          ⚡ 刷新 BBR
+        </button>
+        <button class="btn btn-sm btn-danger-outline" onclick="triggerBatchOp('uninstall', getSelectedIds())" title="彻底卸载已选节点的所有组件与服务">
+          🗑️ 彻底卸载
+        </button>
+        <button class="btn btn-sm btn-danger-ghost" onclick="batchDeleteSelected()" title="从管理面板移除已选记录">
+          ❌ 移出面板
+        </button>
+        <button class="btn btn-sm btn-ghost" onclick="clearSelection()" title="取消全选">
+          ✖️
+        </button>
+      </div>
+    </div>
+  </aside>
 
   <script src="/static/js/main.js"></script>
 </body>

@@ -6,10 +6,32 @@ const state = {
   config: { global: {}, servers: [] },
   filter: 'all',
   search: '',
+  selectedIds: new Set(),
   activeTaskId: null,
   pollTimer: null,
   activeServerId: null
 };
+
+function getVisibleServers() {
+  const servers = state.config.servers || [];
+  return servers.filter(s => {
+    // Status filter
+    if (state.filter === 'online' && s.status !== 'online') return false;
+    if (state.filter === 'idle' && s.status !== 'idle') return false;
+    if (state.filter === 'error' && (s.status !== 'error' && s.status !== 'warning')) return false;
+
+    // Search query
+    if (state.search) {
+      const q = state.search.toLowerCase();
+      const matchName = (s.name || '').toLowerCase().includes(q);
+      const matchHost = (s.host || '').toLowerCase().includes(q);
+      const matchTag = (s.tag_main || '').toLowerCase().includes(q);
+      const matchDomain = (s.domain || '').toLowerCase().includes(q);
+      return matchName || matchHost || matchTag || matchDomain;
+    }
+    return true;
+  });
+}
 
 // ------------------------------------------------------------------------------
 // Utility: Toast Notifications
@@ -101,28 +123,12 @@ function renderServers() {
 
   grid.innerHTML = '';
   const servers = state.config.servers || [];
-
-  const filtered = servers.filter(s => {
-    // Status filter
-    if (state.filter === 'online' && s.status !== 'online') return false;
-    if (state.filter === 'idle' && s.status !== 'idle') return false;
-    if (state.filter === 'error' && (s.status !== 'error' && s.status !== 'warning')) return false;
-
-    // Search query
-    if (state.search) {
-      const q = state.search.toLowerCase();
-      const matchName = (s.name || '').toLowerCase().includes(q);
-      const matchHost = (s.host || '').toLowerCase().includes(q);
-      const matchTag = (s.tag_main || '').toLowerCase().includes(q);
-      const matchDomain = (s.domain || '').toLowerCase().includes(q);
-      return matchName || matchHost || matchTag || matchDomain;
-    }
-    return true;
-  });
+  const filtered = getVisibleServers();
 
   if (servers.length === 0) {
     emptyState.style.display = 'flex';
     grid.style.display = 'none';
+    updateSelectionUI();
     return;
   } else {
     emptyState.style.display = 'none';
@@ -135,12 +141,15 @@ function renderServers() {
         🔍 未找到符合条件的 VPS 主机
       </div>
     `;
+    updateSelectionUI();
     return;
   }
 
   filtered.forEach(s => {
     const card = document.createElement('div');
     card.className = 'server-card';
+    const isSelected = state.selectedIds.has(s.id);
+    if (isSelected) card.classList.add('selected');
 
     // Status Pill
     let statusClass = 'idle';
@@ -205,11 +214,17 @@ function renderServers() {
     card.innerHTML = `
       <div class="server-card-header">
         <div class="server-title-group">
-          <div class="server-name">
-            ${escapeHtml(s.name || s.host)}
-            ${osHtml}
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label class="custom-checkbox-wrapper card-chk-wrap" onclick="event.stopPropagation();" title="勾选/取消勾选此 VPS">
+              <input type="checkbox" class="server-chk" data-id="${s.id}" ${isSelected ? 'checked' : ''} onchange="toggleServerSelect('${s.id}', this.checked)">
+              <span class="custom-checkmark"></span>
+            </label>
+            <div class="server-name">
+              ${escapeHtml(s.name || s.host)}
+              ${osHtml}
+            </div>
           </div>
-          <div class="server-endpoint" title="点击复制 IP 和端口" onclick="copyToClipboard('${s.host}:${s.port}')">
+          <div class="server-endpoint" title="点击复制 IP 和端口" onclick="copyToClipboard('${s.host}:${s.port}')" style="margin-left: 28px;">
             <span>${s.host}:${s.port}</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </div>
@@ -277,7 +292,98 @@ function renderServers() {
 
     grid.appendChild(card);
   });
+  updateSelectionUI();
 }
+
+// ------------------------------------------------------------------------------
+// Multi-Selection Controls
+// ------------------------------------------------------------------------------
+function toggleServerSelect(id, isChecked) {
+  if (isChecked) {
+    state.selectedIds.add(id);
+  } else {
+    state.selectedIds.delete(id);
+  }
+  updateSelectionUI();
+  const chk = document.querySelector(`.server-chk[data-id="${id}"]`);
+  if (chk) {
+    const card = chk.closest('.server-card');
+    if (card) {
+      if (isChecked) card.classList.add('selected');
+      else card.classList.remove('selected');
+    }
+  }
+}
+window.toggleServerSelect = toggleServerSelect;
+
+function getSelectedIds() {
+  return Array.from(state.selectedIds);
+}
+window.getSelectedIds = getSelectedIds;
+
+function toggleSelectAll(isChecked) {
+  const visible = getVisibleServers();
+  visible.forEach(s => {
+    if (isChecked) state.selectedIds.add(s.id);
+    else state.selectedIds.delete(s.id);
+  });
+  renderServers();
+}
+window.toggleSelectAll = toggleSelectAll;
+
+function invertSelection() {
+  const visible = getVisibleServers();
+  visible.forEach(s => {
+    if (state.selectedIds.has(s.id)) {
+      state.selectedIds.delete(s.id);
+    } else {
+      state.selectedIds.add(s.id);
+    }
+  });
+  renderServers();
+}
+window.invertSelection = invertSelection;
+
+function clearSelection() {
+  state.selectedIds.clear();
+  renderServers();
+}
+window.clearSelection = clearSelection;
+
+function updateSelectionUI() {
+  const count = state.selectedIds.size;
+  const badge = document.getElementById('selection-status-badge');
+  const quickActions = document.getElementById('selection-quick-actions');
+  const floatBar = document.getElementById('floating-batch-bar');
+  const floatCount = document.getElementById('float-selected-count');
+  const chkAll = document.getElementById('chk-select-all');
+
+  if (badge) badge.innerHTML = `已选择 <strong>${count}</strong> 台 VPS`;
+  if (floatCount) floatCount.textContent = count;
+
+  if (count > 0) {
+    if (quickActions) quickActions.style.display = 'flex';
+    if (floatBar) floatBar.style.display = 'block';
+  } else {
+    if (quickActions) quickActions.style.display = 'none';
+    if (floatBar) floatBar.style.display = 'none';
+  }
+
+  const visible = getVisibleServers();
+  if (chkAll) {
+    if (visible.length > 0 && visible.every(s => state.selectedIds.has(s.id))) {
+      chkAll.checked = true;
+      chkAll.indeterminate = false;
+    } else if (visible.some(s => state.selectedIds.has(s.id))) {
+      chkAll.checked = false;
+      chkAll.indeterminate = true;
+    } else {
+      chkAll.checked = false;
+      chkAll.indeterminate = false;
+    }
+  }
+}
+window.updateSelectionUI = updateSelectionUI;
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -336,6 +442,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-deploy-all')?.addEventListener('click', deployAllServers);
   document.getElementById('btn-inspect-all')?.addEventListener('click', inspectAllServers);
+
+  // Multi-select events
+  const chkSelectAll = document.getElementById('chk-select-all');
+  if (chkSelectAll) {
+    chkSelectAll.addEventListener('change', (e) => toggleSelectAll(e.target.checked));
+  }
+  document.getElementById('btn-invert-select')?.addEventListener('click', invertSelection);
 
   // Batch ops dropdown menu toggle
   const batchOpsToggle = document.getElementById('btn-batch-ops-toggle');
@@ -773,17 +886,28 @@ async function deployAllServers() {
     return;
   }
 
+  const selected = getSelectedIds();
+  if (selected.length > 0) {
+    if (confirm(`检测到当前已勾选 ${selected.length} 台 VPS：\n\n点击【确定】仅部署已勾选的 ${selected.length} 台主机\n点击【取消】则部署全集群全部 ${count} 台主机`)) {
+      deploySelectedServers();
+      return;
+    }
+  }
+
   if (!confirm(`确定要并发一键部署集群内的全部 ${count} 台 VPS 吗？`)) {
     return;
   }
 
   showToast(`已向后台提交全集群 ${count} 台 VPS 批量部署流水线！`, 'info');
   try {
-    const res = await fetch('/api/deploy_all', { method: 'POST' });
+    const res = await fetch('/api/deploy_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: [] })
+    });
     const data = await res.json();
     if (data.success && data.task_ids && data.task_ids.length > 0) {
       showToast(`已成功下发 ${data.count} 个并行部署任务！`, 'success');
-      // Open terminal for first task
       openTerminal(data.task_ids[0], `全量批量部署任务 (首台主机实时日志)`);
     } else {
       showToast(`批量部署失败: ${data.message}`, 'error');
@@ -793,10 +917,52 @@ async function deployAllServers() {
   }
 }
 
+async function deploySelectedServers() {
+  const selected = getSelectedIds();
+  const count = selected.length;
+  if (count === 0) {
+    showToast('请先勾选需要部署的 VPS', 'info');
+    return;
+  }
+
+  if (!confirm(`确定要并发部署已选中的 ${count} 台 VPS 吗？`)) return;
+
+  showToast(`已向后台提交选中的 ${count} 台 VPS 部署任务！`, 'info');
+  try {
+    const res = await fetch('/api/deploy_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: selected })
+    });
+    const data = await res.json();
+    if (data.success && data.task_ids && data.task_ids.length > 0) {
+      showToast(`已成功下发 ${data.count} 台 VPS 部署任务！`, 'success');
+      openTerminal(data.task_ids[0], `批量部署任务 (${count}台主机并发)`);
+    } else {
+      showToast(`部署失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`部署出错: ${err.message}`, 'error');
+  }
+}
+window.deploySelectedServers = deploySelectedServers;
+
 async function inspectAllServers() {
+  const selected = getSelectedIds();
+  if (selected.length > 0) {
+    if (confirm(`检测到当前已勾选 ${selected.length} 台 VPS：\n\n点击【确定】仅巡检已勾选的 ${selected.length} 台主机\n点击【取消】则巡检全集群主机`)) {
+      inspectSelectedServers();
+      return;
+    }
+  }
+
   showToast('已向后台触发全集群并发巡检，正在后台探测各主机...', 'info');
   try {
-    const res = await fetch('/api/inspect_all', { method: 'POST' });
+    const res = await fetch('/api/inspect_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: [] })
+    });
     const data = await res.json();
     if (data.success) {
       showToast(data.message, 'success');
@@ -809,36 +975,112 @@ async function inspectAllServers() {
   }
 }
 
-async function triggerBatchOp(action) {
+async function inspectSelectedServers() {
+  const selected = getSelectedIds();
+  const count = selected.length;
+  if (count === 0) {
+    showToast('请先勾选需要巡检的 VPS', 'info');
+    return;
+  }
+
+  showToast(`正在对已选中的 ${count} 台 VPS 执行并发巡检...`, 'info');
+  try {
+    const res = await fetch('/api/inspect_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: selected })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      setTimeout(loadConfig, 3000);
+    } else {
+      showToast(`巡检失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`巡检出错: ${err.message}`, 'error');
+  }
+}
+window.inspectSelectedServers = inspectSelectedServers;
+
+async function batchDeleteSelected() {
+  const selected = getSelectedIds();
+  const count = selected.length;
+  if (count === 0) {
+    showToast('请先勾选要移出的 VPS', 'info');
+    return;
+  }
+
+  if (!confirm(`⚠️ 警告：确定要从集群管理面板中移除已选中的 ${count} 台 VPS 吗？\n（说明：仅从面板列表移除记录，不会修改服务器内部程序与配置）`)) return;
+
+  try {
+    const res = await fetch('/api/server/batch_delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: selected })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message, 'success');
+      state.selectedIds.clear();
+      loadConfig();
+    } else {
+      showToast(`移除失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`移除出错: ${err.message}`, 'error');
+  }
+}
+window.batchDeleteSelected = batchDeleteSelected;
+
+async function triggerBatchOp(action, targetIds = null) {
   const batchOpsMenu = document.getElementById('batch-ops-menu');
   if (batchOpsMenu) batchOpsMenu.classList.remove('show');
 
-  const count = (state.config.servers || []).length;
-  if (count === 0) {
+  let selected = Array.isArray(targetIds) && targetIds.length > 0 ? targetIds : getSelectedIds();
+  const isSubset = selected.length > 0;
+  const allServers = state.config.servers || [];
+
+  if (allServers.length === 0) {
     showToast('当前集群内暂无 VPS，请先添加主机', 'error');
     return;
   }
 
+  const targetsCount = isSubset ? selected.length : allServers.length;
+  const scopeText = isSubset ? `已勾选的 ${targetsCount} 台 VPS` : `全集群【全部 ${targetsCount} 台 VPS】`;
+
   const actionMap = {
-    restart: { title: '批量重启 Sing-box 服务', confirm: `确定要向全部 ${count} 台 VPS 发送指令，批量重启 Sing-box 核心进程吗？` },
-    update_core: { title: '批量升级 Sing-box 核心', confirm: `确定要在全部 ${count} 台 VPS 上并发执行官方核心升级任务吗？` },
-    reapply_bbr: { title: '批量刷新激活 BBR+fq', confirm: `确定要在全部 ${count} 台 VPS 上刷新并永久激活 BBRv3 / BBR + fq 拥塞控制吗？` },
-    uninstall: { title: '批量清理卸载 Sing-box', confirm: `⚠️ 高危操作：确定要在全部 ${count} 台 VPS 上彻底停止并卸载 Sing-box 吗？` }
+    restart: { 
+      title: '批量重启 Sing-box 服务', 
+      confirm: `确定要向 ${scopeText} 发送指令，批量重启 Sing-box 核心进程吗？` 
+    },
+    update_core: { 
+      title: '批量升级 Sing-box 核心', 
+      confirm: `确定要在 ${scopeText} 上并发执行官方核心升级任务吗？` 
+    },
+    reapply_bbr: { 
+      title: '批量刷新激活 BBR+fq', 
+      confirm: `确定要在 ${scopeText} 上刷新并永久激活 BBRv3 / BBR + fq 拥塞控制吗？` 
+    },
+    uninstall: { 
+      title: '彻底卸载节点脚本与全部服务', 
+      confirm: `⚠️ 高危操作警告：确定要在 ${scopeText} 上【彻底停止并卸载 Sing-box、Argo 隧道、域名证书、端口规则与所有节点配置】吗？该操作不可逆！` 
+    }
   };
 
-  const meta = actionMap[action] || { title: '批量运维任务', confirm: `确定执行批量操作 [${action}] 吗？` };
+  const meta = actionMap[action] || { title: `批量操作: ${action}`, confirm: `确定对 ${scopeText} 执行 [${action}] 吗？` };
   if (!confirm(meta.confirm)) return;
 
-  showToast(`正在向集群提交【${meta.title}】批量任务...`, 'info');
+  showToast(`正在向目标机器提交【${meta.title}】任务...`, 'info');
   try {
     const res = await fetch('/api/batch_ops', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: action, server_ids: [] })
+      body: JSON.stringify({ action: action, server_ids: selected })
     });
     const data = await res.json();
     if (data.success && data.task_id) {
-      openTerminal(data.task_id, `${meta.title} (集群实时控制台)`);
+      openTerminal(data.task_id, `${meta.title} (${targetsCount}台主机)`);
     } else {
       showToast(`下发批量任务失败: ${data.message}`, 'error');
     }
