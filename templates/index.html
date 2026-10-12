@@ -468,7 +468,10 @@
               </div>
               <div class="form-group col-6">
                 <label for="srv-argo-token">Cloudflare Tunnel Token:</label>
-                <input type="password" id="srv-argo-token" placeholder="eyJhIjoi...">
+                <input type="text" id="srv-argo-token" placeholder="粘贴整行命令或 Token (支持自动提取 eyJ...)" autocomplete="off">
+                <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
+                  💡 支持直接粘贴包含 <code>cloudflared service install ...</code> 的整行命令，系统将自动识别并只保留 <code>eyJ...</code> 核心 Token
+                </small>
               </div>
             </div>
           </div>

@@ -224,8 +224,8 @@ function renderServers() {
               ${osHtml}
             </div>
           </div>
-          <div class="server-endpoint" title="点击复制 IP 和端口" onclick="copyToClipboard('${s.host}:${s.port}')" style="margin-left: 28px;">
-            <span>${s.host}:${s.port}</span>
+          <div class="server-endpoint" title="点击复制 IP (${escapeHtml(s.host)})" onclick="event.stopPropagation(); copyToClipboard('${escapeHtml(s.host)}', '已复制 IP: ${escapeHtml(s.host)}')" style="margin-left: 28px;">
+            <span>${escapeHtml(s.host)}:${s.port}</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </div>
         </div>
@@ -391,12 +391,70 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
-function copyToClipboard(text) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => {
-      showToast(`已复制: ${text}`, 'info');
-    });
+function copyToClipboard(text, customMsg) {
+  if (!text) return;
+  const displayText = customMsg || (text.length > 50 ? '已复制到剪贴板' : `已复制: ${text}`);
+
+  // Fallback copy using hidden textarea (100% works in HTTP / non-secure contexts)
+  function fallbackCopy(str) {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = str;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.top = '0';
+      textarea.style.left = '0';
+      textarea.style.width = '2em';
+      textarea.style.height = '2em';
+      textarea.style.padding = '0';
+      textarea.style.border = 'none';
+      textarea.style.outline = 'none';
+      textarea.style.boxShadow = 'none';
+      textarea.style.background = 'transparent';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (successful) {
+        showToast(displayText, 'info');
+        return true;
+      }
+    } catch (err) {
+      console.warn('Fallback copy failed:', err);
+    }
+    return false;
   }
+
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(displayText, 'info');
+    }).catch(() => {
+      if (!fallbackCopy(text)) {
+        showToast('复制失败，请手动选择复制', 'error');
+      }
+    });
+  } else {
+    if (!fallbackCopy(text)) {
+      showToast('复制失败，请手动选择复制', 'error');
+    }
+  }
+}
+
+// Clean Cloudflare Argo Tunnel token (removes prefixes like 'cloudflared.exe service install' and trailing flags)
+function cleanArgoToken(text) {
+  if (!text) return '';
+  let str = String(text).trim();
+  const eyjIndex = str.indexOf('eyJ');
+  if (eyjIndex !== -1) {
+    str = str.substring(eyjIndex);
+    // Take the token part up to next whitespace/flag
+    str = str.split(/\s+/)[0];
+    // Strip trailing quotes, semicolons, brackets
+    str = str.replace(/['"`;]+$/, '').replace(/^['"]+/, '');
+  }
+  return str.trim();
 }
 
 // ------------------------------------------------------------------------------
@@ -486,6 +544,24 @@ document.addEventListener('DOMContentLoaded', () => {
     srvArgoEnabled.addEventListener('change', (e) => {
       document.getElementById('grp-argo-details').style.display = e.target.checked ? 'block' : 'none';
     });
+  }
+
+  // Argo Token auto-clean input & paste listener
+  const srvArgoToken = document.getElementById('srv-argo-token');
+  if (srvArgoToken) {
+    const handleArgoTokenCleanup = () => {
+      const raw = srvArgoToken.value;
+      if (raw && raw.includes('eyJ')) {
+        const cleaned = cleanArgoToken(raw);
+        if (cleaned !== raw) {
+          srvArgoToken.value = cleaned;
+          showToast('已自动过滤命令前缀，提取纯净 Argo Token', 'success');
+        }
+      }
+    };
+    srvArgoToken.addEventListener('paste', () => setTimeout(handleArgoTokenCleanup, 20));
+    srvArgoToken.addEventListener('input', handleArgoTokenCleanup);
+    srvArgoToken.addEventListener('blur', handleArgoTokenCleanup);
   }
 
   // Auth type toggle
@@ -728,7 +804,7 @@ async function saveServer() {
     reality_sni: document.getElementById('srv-reality-sni').value.trim(),
     argo_enabled: document.getElementById('srv-argo-enabled').checked,
     argo_domain: document.getElementById('srv-argo-domain').value.trim(),
-    argo_token: document.getElementById('srv-argo-token').value.trim()
+    argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)
   };
 
   const endpoint = isEdit ? `/api/server/update/${serverId}` : '/api/server/add';

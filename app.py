@@ -257,6 +257,20 @@ def finish_task(task_id, success=True, error=None):
                 tasks[task_id]["logs"].append(f"[{ts}] [ERR] {error}")
 
 # ------------------------------------------------------------------------------
+# Helpers: Token Cleaning
+# ------------------------------------------------------------------------------
+def clean_argo_token(val):
+    """Clean Argo Tunnel token by stripping command prefixes and trailing options."""
+    if not val:
+        return ""
+    val = str(val).strip()
+    idx = val.find("eyJ")
+    if idx != -1:
+        val = val[idx:]
+        val = val.split()[0].strip("'\"`;")
+    return val.strip()
+
+# ------------------------------------------------------------------------------
 # NAT Port Allocation Calculator
 # ------------------------------------------------------------------------------
 def calculate_ports(server, global_cfg):
@@ -572,7 +586,7 @@ def deploy_server_worker(task_id, server_id):
 
         argo_enabled = server.get("argo_enabled", False)
         argo_domain = server.get("argo_domain", "").strip()
-        argo_token = server.get("argo_token", "").strip()
+        argo_token = clean_argo_token(server.get("argo_token", ""))
 
         env_exports = [
             "export AUTO_INSTALL=1",
@@ -750,7 +764,7 @@ def add_server():
         "reality_sni": data.get('reality_sni', '').strip(),
         "argo_enabled": bool(data.get('argo_enabled', False)),
         "argo_domain": data.get('argo_domain', '').strip(),
-        "argo_token": data.get('argo_token', '').strip(),
+        "argo_token": clean_argo_token(data.get('argo_token', '')),
         "status": "idle",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
@@ -779,6 +793,8 @@ def update_server(server_id):
                 server[field] = int(data[field] or 22)
             elif field == 'argo_enabled':
                 server[field] = bool(data[field])
+            elif field == 'argo_token':
+                server[field] = clean_argo_token(data[field])
             else:
                 server[field] = data[field]
 
