@@ -55,11 +55,13 @@ setup_codebase() {
   local BACKUP_CONFIG="/var/backups/vps-cluster-manager-config.json"
   mkdir -p /var/backups
 
-  # 无论执行何种操作，优先备份现有数据至系统级目录
-  if [[ -f "$INSTALL_DIR/data/config.json" && -s "$INSTALL_DIR/data/config.json" ]]; then
+  # 无论执行何种操作，优先备份现有数据至系统级目录 (仅当存在有效节点配置时才覆盖备份，防止空配置覆盖有效备份)
+  if [[ -f "$INSTALL_DIR/data/config.json" ]] && grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null; then
     cp -f "$INSTALL_DIR/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
-  elif [[ -f "/root/vps-cluster-manager/data/config.json" && -s "/root/vps-cluster-manager/data/config.json" ]]; then
+    cp -f "$INSTALL_DIR/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
+  elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
     cp -f "/root/vps-cluster-manager/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
+    cp -f "/root/vps-cluster-manager/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
   fi
 
   if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -81,10 +83,18 @@ setup_codebase() {
   cd "$INSTALL_DIR"
   mkdir -p "$INSTALL_DIR/data"
 
-  # 如果目标 config.json 不存在或为空，但备份存在，则自动还原
-  if [[ (! -f "$INSTALL_DIR/data/config.json" || ! -s "$INSTALL_DIR/data/config.json") && -f "$BACKUP_CONFIG" ]]; then
-    cp -f "$BACKUP_CONFIG" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-    ok "已自动恢复原有的服务器配置数据！"
+  # 如果目标 config.json 无有效节点记录，自动从多层备份链中寻找含有节点的配置进行恢复
+  if (! grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null); then
+    if [[ -f "$BACKUP_CONFIG" ]] && grep -q '"host"' "$BACKUP_CONFIG" 2>/dev/null; then
+      cp -f "$BACKUP_CONFIG" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+      ok "已从系统级备份 /var/backups 自动恢复原有的服务器配置数据！"
+    elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
+      cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+      ok "已从 /root/vps-cluster-manager 自动恢复原有的服务器配置数据！"
+    elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
+      cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+      ok "已从 /tmp 备份自动恢复原有的服务器配置数据！"
+    fi
   fi
 
   ok "代码已就绪: ${INSTALL_DIR}"
@@ -180,9 +190,30 @@ case "${1:-}" in
     ;;
   update)
     echo "正在升级 VPS Cluster Manager 至最新版本..."
+    mkdir -p /var/backups
+    if [[ -f "$INSTALL_DIR/data/config.json" ]] && grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null; then
+      cp -f "$INSTALL_DIR/data/config.json" "/var/backups/vps-cluster-manager-config.json" 2>/dev/null || true
+      cp -f "$INSTALL_DIR/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
+    fi
     cd "$INSTALL_DIR"
     git fetch --all
     git reset --hard origin/main
+    # 升级后若当前无节点记录，自动从多层备份链中寻找含有节点的配置进行恢复
+    if (! grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null); then
+      if [[ -f "/var/backups/vps-cluster-manager-config.json" ]] && grep -q '"host"' "/var/backups/vps-cluster-manager-config.json" 2>/dev/null; then
+        mkdir -p "$INSTALL_DIR/data"
+        cp -f "/var/backups/vps-cluster-manager-config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        echo "已从 /var/backups 自动恢复服务器节点配置！"
+      elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
+        mkdir -p "$INSTALL_DIR/data"
+        cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        echo "已从 /root 历史目录自动恢复服务器节点配置！"
+      elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
+        mkdir -p "$INSTALL_DIR/data"
+        cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        echo "已从 /tmp 备份自动恢复服务器节点配置！"
+      fi
+    fi
     if [[ -f "$INSTALL_DIR/venv/bin/pip" ]]; then
       "$INSTALL_DIR/venv/bin/pip" install --no-cache-dir -r requirements.txt >/dev/null 2>&1 || true
     fi

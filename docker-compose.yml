@@ -6,7 +6,7 @@ services:
     ports:
       - "5001:5001"
     volumes:
-      - ./data:/app/data
+      - ./data:/opt/vps-cluster-manager/data
     environment:
       - PORT=5001
       - HOST=0.0.0.0

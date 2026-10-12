@@ -88,12 +88,93 @@ async function loadConfig() {
     const res = await fetch('/api/config');
     const data = await res.json();
     state.config = data;
+
+    // Cache servers in client-side localStorage as double insurance
+    const servers = state.config.servers || [];
+    if (servers.length > 0) {
+      try {
+        localStorage.setItem('vps_cm_servers_backup', JSON.stringify(servers));
+        if (state.config.global) {
+          localStorage.setItem('vps_cm_global_backup', JSON.stringify(state.config.global));
+        }
+      } catch (e) {}
+      const banner = document.getElementById('client-backup-restore-banner');
+      if (banner) banner.style.display = 'none';
+    } else {
+      checkClientBackupBanner();
+    }
+
     updateStats();
     renderServers();
   } catch (err) {
     showToast(`加载集群配置失败: ${err.message}`, 'error');
   }
 }
+
+function checkClientBackupBanner() {
+  const banner = document.getElementById('client-backup-restore-banner');
+  if (!banner) return;
+
+  const raw = localStorage.getItem('vps_cm_servers_backup');
+  if (!raw) {
+    banner.style.display = 'none';
+    return;
+  }
+
+  try {
+    const cached = JSON.parse(raw);
+    if (Array.isArray(cached) && cached.length > 0) {
+      banner.style.display = 'flex';
+      const titleEl = document.getElementById('client-backup-banner-title');
+      const btnEl = document.getElementById('client-backup-btn');
+      if (titleEl) {
+        titleEl.textContent = `检测到浏览器本地存有历史 VPS 备份数据（共 ${cached.length} 台主机）`;
+      }
+      if (btnEl) {
+        btnEl.textContent = `⚡ 立即一键还原 (${cached.length}台)`;
+      }
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch (e) {
+    banner.style.display = 'none';
+  }
+}
+
+async function restoreFromClientBackup() {
+  const raw = localStorage.getItem('vps_cm_servers_backup');
+  if (!raw) {
+    showToast('本地浏览器中没有找到 VPS 缓存备份', 'warning');
+    return;
+  }
+
+  try {
+    const servers = JSON.parse(raw);
+    if (!Array.isArray(servers) || servers.length === 0) {
+      showToast('本地缓存备份为空', 'warning');
+      return;
+    }
+
+    showToast(`正在还原本地备份的 ${servers.length} 台 VPS 至服务器...`, 'info');
+    const res = await fetch('/api/server/sync_client_backup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ servers: servers })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast(data.message || `已成功恢复 ${servers.length} 台 VPS！`, 'success');
+      const banner = document.getElementById('client-backup-restore-banner');
+      if (banner) banner.style.display = 'none';
+      await loadConfig();
+    } else {
+      showToast(`恢复失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`恢复出错: ${err.message}`, 'error');
+  }
+}
+window.restoreFromClientBackup = restoreFromClientBackup;
 
 function updateStats() {
   const servers = state.config.servers || [];

@@ -56,6 +56,63 @@ DEFAULT_CONFIG = {
     "servers": []
 }
 
+def find_all_backup_configs():
+    """Scans all possible disk locations and returns list of candidate file paths."""
+    candidates = []
+    
+    # 1. Known primary and historical paths
+    static_paths = [
+        os.path.join(DATA_DIR, "config.json.bak"),
+        os.path.join(DATA_DIR, "config.json.tmp"),
+        "/var/backups/vps-cluster-manager-config.json",
+        "/tmp/vps_cm_config_backup.json",
+        "/tmp/vps_cm_data_bak/config.json",
+        "/tmp/vps_cm_data_bak/data/config.json",
+        "/root/vps-cluster-manager/data/config.json",
+        "/root/vps-cluster-manager/data/config.json.bak",
+        "/root/vps-cluster-manager/data/config.json.tmp",
+        "/root/vps-cluster-manager/config.json",
+        "/opt/vps-cluster-manager/data/config.json.bak",
+        "/opt/vps-cluster-manager/data/config.json.tmp"
+    ]
+    for p in static_paths:
+        if os.path.isfile(p):
+            candidates.append(p)
+
+    # 2. Check /opt/vps-cluster-manager/data/backups/
+    roll_dir = os.path.join(DATA_DIR, 'backups')
+    if os.path.isdir(roll_dir):
+        try:
+            for f in os.listdir(roll_dir):
+                if f.endswith('.json'):
+                    candidates.append(os.path.join(roll_dir, f))
+        except Exception:
+            pass
+
+    # 3. Check /var/backups/
+    if os.path.isdir('/var/backups'):
+        try:
+            for f in os.listdir('/var/backups'):
+                if ('vps' in f.lower() or 'cluster' in f.lower() or 'config' in f.lower()) and f.endswith('.json'):
+                    fp = os.path.join('/var/backups', f)
+                    if os.path.isfile(fp) and fp not in candidates:
+                        candidates.append(fp)
+        except Exception:
+            pass
+
+    # 4. Check /tmp/
+    if os.path.isdir('/tmp'):
+        try:
+            for f in os.listdir('/tmp'):
+                if ('vps' in f.lower() or 'config' in f.lower()) and f.endswith('.json'):
+                    fp = os.path.join('/tmp', f)
+                    if os.path.isfile(fp) and fp not in candidates:
+                        candidates.append(fp)
+        except Exception:
+            pass
+
+    return candidates
+
 def load_config():
     with config_lock:
         data = None
@@ -66,27 +123,33 @@ def load_config():
             except Exception as e:
                 print(f"[ERROR] Failed to load config from {CONFIG_FILE}: {e}")
 
-        # If data is missing or has empty servers list, check historical paths and backup files
+        # If data is missing or has empty servers list, exhaustively search all historical paths and backups
         if not data or not data.get("servers"):
-            candidates = [
-                "/root/vps-cluster-manager/data/config.json",
-                "/root/vps-cluster-manager/config.json",
-                "/var/backups/vps-cluster-manager-config.json",
-                os.path.join(DATA_DIR, "config.json.bak"),
-                "/tmp/vps_cm_config_backup.json"
-            ]
-            for cand in candidates:
-                if os.path.isfile(cand) and cand != CONFIG_FILE:
+            best_servers = []
+            best_global = {}
+            for cand in find_all_backup_configs():
+                if cand != CONFIG_FILE:
                     try:
                         with open(cand, 'r', encoding='utf-8') as f:
                             cand_data = json.load(f)
-                            if cand_data.get("servers"):
-                                print(f"[INFO] Auto-migrated {len(cand_data['servers'])} servers from historical backup {cand}")
-                                data = cand_data
-                                save_config_unlocked(data)
-                                break
+                            if isinstance(cand_data, dict):
+                                srvs = cand_data.get("servers", [])
+                                if len(srvs) > len(best_servers):
+                                    best_servers = srvs
+                                    if cand_data.get("global"):
+                                        best_global = cand_data.get("global")
+                                    print(f"[INFO] Auto-discovered {len(srvs)} servers from historical backup {cand}")
                     except Exception:
                         pass
+
+            if best_servers:
+                if not data:
+                    data = json.loads(json.dumps(DEFAULT_CONFIG))
+                data["servers"] = best_servers
+                if best_global:
+                    data.setdefault("global", {}).update(best_global)
+                print(f"[INFO] Successfully auto-recovered {len(best_servers)} VPS nodes into active config!")
+                save_config_unlocked(data)
 
         if not data:
             data = json.loads(json.dumps(DEFAULT_CONFIG))
@@ -123,23 +186,50 @@ def load_config():
 
 def save_config_unlocked(data):
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         temp_file = CONFIG_FILE + '.tmp'
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        if os.path.exists(CONFIG_FILE):
-            os.remove(CONFIG_FILE)
-        os.rename(temp_file, CONFIG_FILE)
+        # Atomic file replacement without deletion window
+        os.replace(temp_file, CONFIG_FILE)
 
-        # Dual backup persistence: directory backup + system-wide backup
-        try:
-            bak_file = os.path.join(DATA_DIR, 'config.json.bak')
-            with open(bak_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            os.makedirs('/var/backups', exist_ok=True)
-            with open('/var/backups/vps-cluster-manager-config.json', 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        # Multi-layer rolling backups (Never wipe non-empty backups with empty ones)
+        curr_servers = data.get("servers", [])
+        if curr_servers:
+            # 1. Update directory backup
+            try:
+                bak_file = os.path.join(DATA_DIR, 'config.json.bak')
+                with open(bak_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+            # 2. Update system-wide backup in /var/backups
+            try:
+                os.makedirs('/var/backups', exist_ok=True)
+                sys_bak = '/var/backups/vps-cluster-manager-config.json'
+                with open(sys_bak, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+            # 3. Create persistent rolling backup with timestamp
+            try:
+                roll_dir = os.path.join(DATA_DIR, 'backups')
+                os.makedirs(roll_dir, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                with open(os.path.join(roll_dir, f"config_{ts}.json"), 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                # Keep up to 20 rolling backups
+                all_baks = sorted([os.path.join(roll_dir, f) for f in os.listdir(roll_dir) if f.endswith('.json')])
+                while len(all_baks) > 20:
+                    oldest = all_baks.pop(0)
+                    try:
+                        os.remove(oldest)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     except Exception as e:
         print(f"[ERROR] Failed to save config: {e}")
 
@@ -917,6 +1007,64 @@ def batch_delete_servers():
         deleted_count = original_count - len(cur["servers"])
         save_config_unlocked(cur)
     return jsonify({"success": True, "message": f"已成功从集群管理面板移除 {deleted_count} 台 VPS", "count": deleted_count})
+
+@app.route('/api/server/sync_client_backup', methods=['POST'])
+def sync_client_backup():
+    """Restores servers from client browser localStorage backup."""
+    data = request.get_json() or {}
+    client_servers = data.get("servers", [])
+    if not isinstance(client_servers, list) or not client_servers:
+        return jsonify({"success": False, "message": "备份数据为空或格式不正确"}), 400
+
+    with config_lock:
+        cfg = load_config()
+        existing_keys = {(s.get("host"), int(s.get("port", 22))) for s in cfg.get("servers", [])}
+        restored_count = 0
+
+        for s in client_servers:
+            if not s.get("host"):
+                continue
+            key = (s.get("host"), int(s.get("port", 22)))
+            if key not in existing_keys:
+                name = s.get("name") or s.get("host")
+                if not s.get("tag_main") or s.get("tag_main") == name:
+                    s["tag_main"] = f"{name}本机"
+                if not s.get("tag_argo") or s.get("tag_argo", "").endswith("-Argo") or s.get("tag_argo") == name:
+                    s["tag_argo"] = f"{name}优选"
+                cfg["servers"].append(s)
+                existing_keys.add(key)
+                restored_count += 1
+
+        if restored_count > 0:
+            save_config_unlocked(cfg)
+
+    return jsonify({
+        "success": True,
+        "restored_count": restored_count,
+        "total_count": len(cfg.get("servers", [])),
+        "message": f"成功从浏览器本地备份中恢复 {restored_count} 台 VPS 主机！"
+    })
+
+@app.route('/api/server/backup_status', methods=['GET'])
+def backup_status():
+    """Returns available backup files and their server counts for user diagnostics."""
+    backups = []
+    for cand in find_all_backup_configs():
+        try:
+            sz = os.path.getsize(cand)
+            with open(cand, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                srvs = d.get("servers", []) if isinstance(d, dict) else []
+                backups.append({
+                    "path": cand,
+                    "size_bytes": sz,
+                    "servers_count": len(srvs),
+                    "modified_time": datetime.fromtimestamp(os.path.getmtime(cand)).strftime("%Y-%m-%d %H:%M:%S")
+                })
+        except Exception:
+            pass
+    return jsonify({"success": True, "backups": backups})
+
 
 # ------------------------------------------------------------------------------
 # Routes: Pre-flight Check & Deployment Tasks
