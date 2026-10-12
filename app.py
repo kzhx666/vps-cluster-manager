@@ -2073,7 +2073,8 @@ echo "UNINSTALLED_OK"
                         append_task_log(task_id, f"[{name}] Sing-box、Argo 隧道、证书与所有关联配置已彻底清理卸载完毕！")
 
                         # 同步通知节点管理平台注销并清理已推送的订阅源
-                        push_target = global_cfg.get("push_target", {})
+                        cur_cfg = load_config()
+                        push_target = cur_cfg.get("global", {}).get("push_target", {})
                         p_url = (push_target.get("url") or "").strip().rstrip('/')
                         p_tok = (push_target.get("token") or "").strip()
                         if p_url and REQUESTS_AVAILABLE:
