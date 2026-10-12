@@ -559,24 +559,53 @@ EOF_DNS
 fi
 
 # ==============================================================================
-# 2. 内存检测与智能虚拟内存 (Swap) 自动挂载 (防小内存 OOM 爆死)
+# 2. 根分区磁盘安全检查与智能动态虚拟内存 (Swap) 挂载 (杜绝爆磁盘/爆内存)
 # ==============================================================================
+# 2.1 紧急磁盘自救: 若磁盘可用空间告急 (<300MB) 且已存在过大的 /swapfile，立刻释放以恢复磁盘可用空间
+DISK_FREE_MB=$(df -m / 2>/dev/null | awk 'END {print $(NF-2)}')
+if [ "${DISK_FREE_MB:-0}" -lt 300 ] && [ -f /swapfile ]; then
+  info "检测到根分区可用空间告急 (${DISK_FREE_MB:-0}MB < 300MB) 且存在旧 Swapfile，正在释放以恢复磁盘配额..."
+  swapoff /swapfile 2>/dev/null || true
+  rm -f /swapfile 2>/dev/null || true
+  sed -i '/\/swapfile/d' /etc/fstab 2>/dev/null || true
+  DISK_FREE_MB=$(df -m / 2>/dev/null | awk 'END {print $(NF-2)}')
+  info "旧 Swapfile 已成功释放！当前磁盘已恢复可用空间: ${DISK_FREE_MB:-0}MB"
+fi
+
+# 2.2 智能根据物理内存和磁盘剩余动态规划 Swap 大小
 MEM_TOTAL=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
 SWAP_TOTAL=$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
-if [ "$MEM_TOTAL" -lt 1048576 ] && [ "$SWAP_TOTAL" -lt 524288 ]; then
-  info "检测到服务器物理内存不足 1GB ($((MEM_TOTAL/1024))MB) 且缺少 Swap！"
-  info "正在创建 1GB 虚拟内存 (Swapfile) 以防止包管理和进程 OOM 爆内存卡死..."
-  if [ ! -f /swapfile ]; then
-    fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null || true
+
+# 仅在物理内存不足 1GB 且当前无有效 Swap 的机器上按需轻量分配
+if [ "$MEM_TOTAL" -lt 1048576 ] && [ "$SWAP_TOTAL" -lt 262144 ]; then
+  SWAP_SIZE_MB=0
+  if [ "${DISK_FREE_MB:-0}" -ge 2500 ]; then
+    SWAP_SIZE_MB=1024
+  elif [ "${DISK_FREE_MB:-0}" -ge 1200 ]; then
+    SWAP_SIZE_MB=512
+  elif [ "${DISK_FREE_MB:-0}" -ge 600 ]; then
+    SWAP_SIZE_MB=256
+  fi
+
+  if [ "$SWAP_SIZE_MB" -gt 0 ] && [ ! -f /swapfile ]; then
+    info "检测到服务器物理内存 $((MEM_TOTAL/1024))MB，磁盘可用 ${DISK_FREE_MB}MB，智能安全分配 ${SWAP_SIZE_MB}MB Swapfile..."
+    fallocate -l ${SWAP_SIZE_MB}M /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=${SWAP_SIZE_MB} 2>/dev/null || true
     if [ -f /swapfile ]; then
       chmod 600 /swapfile
       mkswap /swapfile >/dev/null 2>&1 || true
-      swapon /swapfile >/dev/null 2>&1 || true
-      if ! grep -q "/swapfile" /etc/fstab 2>/dev/null; then
-        echo "/swapfile swap swap defaults 0 0" >> /etc/fstab 2>/dev/null || true
+      if swapon /swapfile 2>/dev/null; then
+        if ! grep -q "/swapfile" /etc/fstab 2>/dev/null; then
+          echo "/swapfile swap swap defaults 0 0" >> /etc/fstab 2>/dev/null || true
+        fi
+        info "${SWAP_SIZE_MB}MB 虚拟内存 (Swapfile) 已成功激活挂载！"
+      else
+        # 部分 OpenVZ / LXC 容器内核禁止 swapon，立即清理掉文件，不白占磁盘
+        rm -f /swapfile 2>/dev/null || true
+        info "受限虚拟化环境禁止 swapon，已自动回收释放 ${SWAP_SIZE_MB}MB 磁盘空间！"
       fi
-      info "1GB 虚拟内存 (Swapfile) 已成功激活挂载！"
     fi
+  else
+    info "当前磁盘可用空间紧凑 (${DISK_FREE_MB:-0}MB)，跳过分配 Swapfile，优先确保系统运行及核心下载所需磁盘空间安全！"
   fi
 fi
 
@@ -602,20 +631,26 @@ if command -v apk >/dev/null 2>&1; then
   info "Configuring Alpine Linux (apk)..."
   apk update >/dev/null 2>&1 || true
   apk add --no-cache curl wget jq tar ca-certificates bash openrc tzdata chrony iptables ip6tables >/dev/null 2>&1 || true
+  rm -rf /var/cache/apk/* 2>/dev/null || true
 elif command -v apt-get >/dev/null 2>&1; then
   info "Configuring Debian/Ubuntu (apt-get)..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq >/dev/null 2>&1 || true
   apt-get install -y -qq curl wget jq tar ca-certificates bash chrony iptables iproute2 dnsutils >/dev/null 2>&1 || true
+  apt-get clean >/dev/null 2>&1 || true
+  rm -rf /var/lib/apt/lists/* 2>/dev/null || true
 elif command -v dnf >/dev/null 2>&1; then
   info "Configuring RHEL/Fedora/Rocky (dnf)..."
   dnf install -y -q curl wget jq tar ca-certificates bash chrony iptables iproute bind-utils >/dev/null 2>&1 || true
+  dnf clean all >/dev/null 2>&1 || true
 elif command -v yum >/dev/null 2>&1; then
   info "Configuring CentOS/RHEL (yum)..."
   yum install -y -q curl wget jq tar ca-certificates bash chrony iptables iproute bind-utils >/dev/null 2>&1 || true
+  yum clean all >/dev/null 2>&1 || true
 elif command -v pacman >/dev/null 2>&1; then
   info "Configuring Arch Linux (pacman)..."
   pacman -Sy --noconfirm curl wget jq tar ca-certificates bash chrony iptables iproute2 >/dev/null 2>&1 || true
+  pacman -Sc --noconfirm >/dev/null 2>&1 || true
 fi
 
 # Ensure /bin/bash exists
@@ -675,9 +710,9 @@ else
     TARGET_CC="bbr"
   fi
 
-  # 4. 写入 sysctl 内核调优配置
+  # 4. 写入 sysctl 内核调优配置 (容错保护)
   mkdir -p /etc/sysctl.d 2>/dev/null || true
-  cat > /etc/sysctl.d/99-bbr.conf <<EOF
+  cat > /etc/sysctl.d/99-bbr.conf <<EOF 2>/dev/null || true
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = ${TARGET_CC}
 EOF
@@ -685,8 +720,8 @@ EOF
   if [ -f /etc/sysctl.conf ]; then
     sed -i '/net.core.default_qdisc/d' /etc/sysctl.conf 2>/dev/null || true
     sed -i '/net.ipv4.tcp_congestion_control/d' /etc/sysctl.conf 2>/dev/null || true
-    echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf
-    echo "net.ipv4.tcp_congestion_control = ${TARGET_CC}" >> /etc/sysctl.conf
+    echo "net.core.default_qdisc = fq" >> /etc/sysctl.conf 2>/dev/null || true
+    echo "net.ipv4.tcp_congestion_control = ${TARGET_CC}" >> /etc/sysctl.conf 2>/dev/null || true
   fi
 
   # 5. 应用生效
