@@ -865,7 +865,7 @@ def deploy_server_worker(task_id, server_id):
 {chr(10).join(env_exports)}
 curl -fsSL "{script_url}" -o /tmp/sb_install.sh || wget -qO /tmp/sb_install.sh "{script_url}"
 chmod +x /tmp/sb_install.sh
-/bin/bash /tmp/sb_install.sh
+/bin/bash /tmp/sb_install.sh --auto
 rm -f /tmp/sb_install.sh
 """
         append_task_log(task_id, "开始执行 Sing-box 核心协议集群自动化部署...", step="部署 Sing-box 极速核心", progress=60)
