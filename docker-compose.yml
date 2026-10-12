@@ -1,0 +1,12 @@
+services:
+  vps-cluster-manager:
+    build: .
+    container_name: vps-cluster-manager
+    restart: always
+    ports:
+      - "5005:5005"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PORT=5005
+      - HOST=0.0.0.0

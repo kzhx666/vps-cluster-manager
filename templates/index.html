@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多 VPS 集群一键批量安装与巡检控制台 | VPS Cluster Manager</title>
+  <meta name="description" content="多 VPS 集群一键批量部署 Sing-box 核心协议 (Reality/Hy2/TUIC/Argo)，支持 NAT 端口池定制、CF DNS-01 证书自动化与流媒体巡检控制台。">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body class="dark-theme">
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Main Application Wrapper -->
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+        <div class="brand-info">
+          <h1 class="brand-title">VPS Cluster Manager</h1>
+          <span class="brand-subtitle">多 VPS 集群批量部署与巡检控制台</span>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="header-actions">
+        <button id="btn-global-config" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          全局统一配置
+        </button>
+        <button id="btn-batch-import" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          批量导入
+        </button>
+        <button id="btn-add-server" class="btn btn-secondary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          添加 VPS
+        </button>
+        <button id="btn-inspect-all" class="btn btn-primary-outline">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+          集群巡检
+        </button>
+        <button id="btn-deploy-all" class="btn btn-primary">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          全量一键并发部署
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Body -->
+    <main class="app-main">
+      <!-- Status Stats Grid -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon icon-cyan">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          </div>
+          <div class="stat-details">
+            <span class="stat-label">集群 VPS 总数</span>
+            <span id="stat-total" class="stat-value">0</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon icon-emerald">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+          </div>
+          <div class="stat-details">
+            <span class="stat-label">在线运行健康</span>
+            <span id="stat-online" class="stat-value text-emerald">0</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon icon-amber">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+          </div>
+          <div class="stat-details">
+            <span class="stat-label">未部署 / 待定</span>
+            <span id="stat-idle" class="stat-value text-amber">0</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon icon-rose">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+          </div>
+          <div class="stat-details">
+            <span class="stat-label">离线 / 异常机器</span>
+            <span id="stat-error" class="stat-value text-rose">0</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Toolbar: Filter & Search -->
+      <section class="toolbar-section">
+        <div class="search-box">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="search-input" placeholder="搜索 VPS 名称、IP 地址、域名或订阅标签...">
+        </div>
+
+        <div class="filter-pills">
+          <button class="filter-pill active" data-filter="all">全部 (<span id="count-all">0</span>)</button>
+          <button class="filter-pill" data-filter="online">🟢 在线 (<span id="count-online">0</span>)</button>
+          <button class="filter-pill" data-filter="idle">⚪ 待部署 (<span id="count-idle">0</span>)</button>
+          <button class="filter-pill" data-filter="error">🔴 异常 (<span id="count-error">0</span>)</button>
+        </div>
+
+        <div class="toolbar-right">
+          <button id="btn-export-config" class="btn btn-sm btn-ghost" title="备份导出 JSON 配置">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            导出配置
+          </button>
+          <label class="btn btn-sm btn-ghost" title="从 JSON 还原配置">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            导入配置
+            <input type="file" id="import-file-input" accept=".json" style="display:none;">
+          </label>
+        </div>
+      </section>
+
+      <!-- Server Cards Grid -->
+      <section class="server-grid-container">
+        <div id="server-grid" class="server-grid">
+          <!-- Dynamically populated via JavaScript -->
+        </div>
+
+        <!-- Empty State Message -->
+        <div id="empty-state" class="empty-state" style="display: none;">
+          <div class="empty-icon">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          </div>
+          <h3>暂无 VPS 节点</h3>
+          <p>您可以点击上方按钮单个添加服务器，或使用「批量导入」快速粘贴多台主机凭据！</p>
+          <div class="empty-actions">
+            <button class="btn btn-secondary" onclick="openModal('modal-batch-import')">批量导入 VPS</button>
+            <button class="btn btn-primary" onclick="openModal('modal-server-edit')">添加第一台 VPS</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 1: Global Unified Configuration                                     -->
+  <!-- ========================================================================= -->
+  <div id="modal-global-config" class="modal-backdrop">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-cyan">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </div>
+          <div>
+            <h2 class="modal-title">全局统一集群策略配置</h2>
+            <p class="modal-desc">统一配置的参数将默认应用到所有 VPS，免去重复输入的烦恼。</p>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-global-config')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Section 1: Node Push Platform Settings -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+            🚀 自动推送到节点管理平台 (cf-node-manager-plus)
+          </div>
+          <div class="form-row">
+            <div class="form-group col-7">
+              <label for="cfg-push-url">管理平台地址 (PUSH_URL):</label>
+              <input type="text" id="cfg-push-url" placeholder="http://23.254.150.14:5000 或 https://manager.domain.com">
+            </div>
+            <div class="form-group col-5">
+              <label for="cfg-push-token">管理平台 Token / 密码:</label>
+              <input type="password" id="cfg-push-token" placeholder="WEB_PASSWORD">
+            </div>
+          </div>
+          <div class="form-row align-center">
+            <div class="form-group col-8">
+              <label class="checkbox-label">
+                <input type="checkbox" id="cfg-auto-push" checked>
+                <span>安装完成后默认自动推送节点到面板 (无需逐台手动推送)</span>
+              </label>
+            </div>
+            <div class="form-group col-4 text-right">
+              <button id="btn-test-push-target" type="button" class="btn btn-sm btn-secondary">测试面板连通性</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: Cloudflare ACME DNS Token -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            🔒 Cloudflare 域名证书自动申请令牌 (DNS-01 验证)
+          </div>
+          <p class="section-hint">当 VPS 指定了自有域名时，将自动通过此 Token 走 Cloudflare DNS 验证申请 Let's Encrypt 证书。<strong>无需开放 80/443 端口，NAT VPS 或被阻断机房也能 100% 成功！</strong></p>
+          <div class="form-group">
+            <label for="cfg-cf-dns-token">Cloudflare API Token (需具备 Zone.DNS 编辑权限):</label>
+            <input type="password" id="cfg-cf-dns-token" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...">
+          </div>
+        </div>
+
+        <!-- Section 3: Default Protocols & Script -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+            ⚙️ 默认安装协议与并发控制
+          </div>
+          <div class="form-row">
+            <div class="form-group col-12">
+              <label>默认启用协议 (全系支持三合一单机多协议):</label>
+              <div class="checkbox-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-reality" checked>
+                  <span>VLESS-Reality (TCP 顶流、免证书伪装)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-hy2" checked>
+                  <span>Hysteria 2 (UDP 极速丢包克星)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-tuic" checked>
+                  <span>TUIC v5 (QUIC 极低延迟备用)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group col-8">
+              <label for="cfg-script-url">Sing-box 安装脚本源:</label>
+              <input type="text" id="cfg-script-url" value="https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh">
+            </div>
+            <div class="form-group col-4">
+              <label for="cfg-concurrency">批量部署并发数:</label>
+              <input type="number" id="cfg-concurrency" value="5" min="1" max="20">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-global-config')">取消</button>
+        <button id="btn-save-global-config" class="btn btn-primary">保存全局配置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 2: Add / Edit VPS Modal                                             -->
+  <!-- ========================================================================= -->
+  <div id="modal-server-edit" class="modal-backdrop">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+          </div>
+          <div>
+            <h2 id="server-modal-title" class="modal-title">添加 VPS 主机</h2>
+            <p class="modal-desc">自定义该台 VPS 的个性化设置 (NAT端口、专属域名、Argo 隧道等)。</p>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-server-edit')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <input type="hidden" id="edit-server-id">
+
+        <!-- 1. 基础连接凭据 -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+            1. SSH 连接信息
+          </div>
+          <div class="form-row">
+            <div class="form-group col-5">
+              <label for="srv-name">节点别名 / 名称:</label>
+              <input type="text" id="srv-name" placeholder="例如: 香港-NAT-01">
+            </div>
+            <div class="form-group col-5">
+              <label for="srv-host">IP 地址 / DDNS 域名 *:</label>
+              <input type="text" id="srv-host" placeholder="例如: 1.2.3.4 或 vps.mydomain.com" required>
+            </div>
+            <div class="form-group col-2">
+              <label for="srv-port">SSH 端口:</label>
+              <input type="number" id="srv-port" value="22" placeholder="22">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group col-4">
+              <label for="srv-user">SSH 用户名:</label>
+              <input type="text" id="srv-user" value="root" placeholder="root">
+            </div>
+            <div class="form-group col-4">
+              <label for="srv-auth-type">认证方式:</label>
+              <select id="srv-auth-type">
+                <option value="password">密码认证</option>
+                <option value="private_key">SSH 私钥认证</option>
+              </select>
+            </div>
+            <div class="form-group col-4" id="grp-password">
+              <label for="srv-password">SSH 密码:</label>
+              <input type="password" id="srv-password" placeholder="服务器 root 密码">
+            </div>
+          </div>
+          <div class="form-group" id="grp-private-key" style="display: none;">
+            <label for="srv-key">SSH 私钥 (PEM 格式):</label>
+            <textarea id="srv-key" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----..."></textarea>
+          </div>
+        </div>
+
+        <!-- 2. 节点与订阅标签 -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
+            2. 订阅源名称 (TAG 标签)
+          </div>
+          <div class="form-row">
+            <div class="form-group col-6">
+              <label for="srv-tag-main">主节点订阅名称 (TAG_MAIN):</label>
+              <input type="text" id="srv-tag-main" placeholder="例如: HK-NAT-01 (默认使用别名)">
+              <span class="input-tip">Reality / Hy2 / TUIC 三合一聚合到该订阅源</span>
+            </div>
+            <div class="form-group col-6">
+              <label for="srv-tag-argo">Argo 隧道专属订阅名称 (TAG_ARGO):</label>
+              <input type="text" id="srv-tag-argo" placeholder="例如: HK-NAT-Argo">
+              <span class="input-tip">若开启 Argo 隧道，此节点单独推送到此订阅源</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 端口模式与 NAT 端口池 -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+            3. 端口规划模式 (解决 NAT VPS 端口受限痛点)
+          </div>
+          <div class="form-row">
+            <div class="form-group col-4">
+              <label for="srv-port-mode">端口分配模式:</label>
+              <select id="srv-port-mode">
+                <option value="auto">标准全端口模式 (随机高位端口)</option>
+                <option value="nat">NAT 受限端口池模式 (严格限制范围)</option>
+              </select>
+            </div>
+            <div class="form-group col-8" id="grp-port-range">
+              <label for="srv-port-range">NAT 可用端口范围 (例如: 10020-10039):</label>
+              <input type="text" id="srv-port-range" placeholder="例如: 10020-10039">
+              <div id="nat-calc-preview" class="nat-preview-badge">
+                💡 自动规划分配: Reality=10020, TUIC=10021, Hy2=10022, Hy2跳跃池=10023-10039
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. 专属证书域名 (联动全局 CF_DNS_TOKEN) -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            4. 专属 TLS 证书域名 (可选)
+          </div>
+          <div class="form-row">
+            <div class="form-group col-12">
+              <label for="srv-domain">该 VPS 绑定的二级域名 (例如: hk01.example.com):</label>
+              <input type="text" id="srv-domain" placeholder="留空则自动使用 10 年免证书 ECC 伪装自签">
+              <span class="input-tip">若填写域名，将自动利用全局 Cloudflare DNS Token 走 DNS-01 验证签发证书 (无视 80 端口关闭)。</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Cloudflare Argo 隧道 -->
+        <div class="form-section">
+          <div class="section-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path></svg>
+            5. Cloudflare Argo 隧道穿透 (可选)
+          </div>
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" id="srv-argo-enabled">
+              <span>启用 Cloudflare Argo 隧道守护进程 (彻底免开端口，自带 CDN 加速)</span>
+            </label>
+          </div>
+          <div id="grp-argo-details" style="display: none;">
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="srv-argo-domain">绑定的 Argo 域名 (例如: argo-hk.example.com):</label>
+                <input type="text" id="srv-argo-domain" placeholder="argo-hk.example.com">
+              </div>
+              <div class="form-group col-6">
+                <label for="srv-argo-token">Cloudflare Tunnel Token:</label>
+                <input type="password" id="srv-argo-token" placeholder="eyJhIjoi...">
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-server-edit')">取消</button>
+        <button id="btn-save-server" class="btn btn-primary">保存服务器</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 3: Batch Import Modal                                               -->
+  <!-- ========================================================================= -->
+  <div id="modal-batch-import" class="modal-backdrop">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-cyan">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </div>
+          <div>
+            <h2 class="modal-title">批量导入 VPS 主机</h2>
+            <p class="modal-desc">支持多行批量粘贴，自动解析 IP、SSH端口、用户与密码。</p>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-batch-import')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="form-group">
+          <label>支持的输入格式样例 (每行一台)：</label>
+          <div class="code-preview">
+# 格式 1: IP:端口:用户:密码 (例如: 1.2.3.4:22:root:MyPass123)
+# 格式 2: IP:密码 (默认端口 22, 用户 root)
+# 格式 3: 用户:密码@IP:端口 (例如: root:MyPass123@1.2.3.4:22022)
+# 格式 4: IP 端口 用户 密码 (空格分隔)
+1.2.3.4:22:root:Password123
+5.6.7.8:22022:root:SecPass456
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="batch-import-text">在此粘贴多行文本：</label>
+          <textarea id="batch-import-text" rows="8" placeholder="在此粘贴你的 VPS 列表..."></textarea>
+        </div>
+        <div id="batch-preview-container" style="display:none;" class="batch-preview-container">
+          <h4>解析预览 (共 <span id="batch-preview-count">0</span> 台):</h4>
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead><tr><th>别名</th><th>主机 IP</th><th>SSH 端口</th><th>用户</th><th>认证</th></tr></thead>
+              <tbody id="batch-preview-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-batch-import')">取消</button>
+        <button id="btn-do-batch-import" class="btn btn-primary">确认导入全部</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 4: Real-time Terminal Log Viewer Drawer                             -->
+  <!-- ========================================================================= -->
+  <div id="modal-terminal" class="modal-backdrop">
+    <div class="modal-dialog modal-xl modal-terminal-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-cyan pulse">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          </div>
+          <div>
+            <h2 id="terminal-title" class="modal-title">实时任务控制台</h2>
+            <div class="terminal-meta">
+              <span id="terminal-step" class="badge badge-info">执行中...</span>
+              <span id="terminal-server-name" class="meta-label">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="terminal-header-actions">
+          <label class="checkbox-label-sm">
+            <input type="checkbox" id="chk-autoscroll" checked>
+            <span>自动滚屏</span>
+          </label>
+          <button id="btn-copy-logs" class="btn btn-sm btn-secondary">复制日志</button>
+          <button class="modal-close" onclick="closeModal('modal-terminal')">&times;</button>
+        </div>
+      </div>
+
+      <div class="modal-body terminal-body">
+        <!-- Progress Bar -->
+        <div class="progress-bar-container">
+          <div id="terminal-progress-bar" class="progress-bar" style="width: 10%;"></div>
+        </div>
+
+        <!-- Terminal Output Window -->
+        <div id="terminal-window" class="terminal-window">
+          <div id="terminal-lines" class="terminal-lines"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer terminal-footer">
+        <span id="terminal-status-text" class="status-tip">等待输出...</span>
+        <button class="btn btn-secondary" onclick="closeModal('modal-terminal')">关闭控制台</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- MODAL 5: Unlock Test Results Modal                                        -->
+  <!-- ========================================================================= -->
+  <div id="modal-unlock" class="modal-backdrop">
+    <div class="modal-dialog modal-md">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-emerald">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </div>
+          <div>
+            <h2 id="unlock-modal-title" class="modal-title">流媒体与 AI 解锁测试报告</h2>
+            <p id="unlock-modal-subtitle" class="modal-desc">-</p>
+          </div>
+        </div>
+        <button class="modal-close" onclick="closeModal('modal-unlock')">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="unlock-grid">
+          <div class="unlock-card">
+            <div class="unlock-card-title">🤖 OpenAI (ChatGPT)</div>
+            <div id="unlock-val-openai" class="unlock-card-status badge-info">检测中...</div>
+          </div>
+          <div class="unlock-card">
+            <div class="unlock-card-title">🎬 YouTube Premium</div>
+            <div id="unlock-val-youtube" class="unlock-card-status badge-info">检测中...</div>
+          </div>
+          <div class="unlock-card">
+            <div class="unlock-card-title">🍿 Netflix (奈飞)</div>
+            <div id="unlock-val-netflix" class="unlock-card-status badge-info">检测中...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal('modal-unlock')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
