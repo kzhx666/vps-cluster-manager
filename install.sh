@@ -52,17 +52,22 @@ install_deps() {
 # 3. 拉取/更新代码到 /opt/vps-cluster-manager (自动备份与保留配置)
 setup_codebase() {
   mkdir -p /opt
+  local ETC_DIR="/etc/vps-cluster-manager"
+  local ETC_ROLL_DIR="/etc/vps-cluster-manager/backups"
   local BACKUP_CONFIG="/var/backups/vps-cluster-manager-config.json"
+  mkdir -p "$ETC_ROLL_DIR"
   mkdir -p /var/backups
 
-  # 无论执行何种操作，优先备份现有数据至系统级目录 (仅当存在有效节点配置时才覆盖备份，防止空配置覆盖有效备份)
-  if [[ -f "$INSTALL_DIR/data/config.json" ]] && grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null; then
-    cp -f "$INSTALL_DIR/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
-    cp -f "$INSTALL_DIR/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
-  elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
-    cp -f "/root/vps-cluster-manager/data/config.json" "$BACKUP_CONFIG" 2>/dev/null || true
-    cp -f "/root/vps-cluster-manager/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
-  fi
+  # 无论执行何种操作，优先备份现有数据至永久系统目录 /etc/vps-cluster-manager/ (与 git 目录完全隔离，永不被覆盖或删除)
+  for cand in "$INSTALL_DIR/data/config.json" "/root/vps-cluster-manager/data/config.json"; do
+    if [[ -f "$cand" ]] && grep -q '"host"' "$cand" 2>/dev/null; then
+      cp -f "$cand" "$ETC_DIR/config.json" 2>/dev/null || true
+      cp -f "$cand" "$ETC_ROLL_DIR/config_$(date +%Y%m%d_%H%M%S).json" 2>/dev/null || true
+      cp -f "$cand" "$BACKUP_CONFIG" 2>/dev/null || true
+      cp -f "$cand" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
+      break
+    fi
+  done
 
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     info "检测到已有代码库，正在更新最新代码 (保留已有配置)..."
@@ -85,15 +90,31 @@ setup_codebase() {
 
   # 如果目标 config.json 无有效节点记录，自动从多层备份链中寻找含有节点的配置进行恢复
   if (! grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null); then
-    if [[ -f "$BACKUP_CONFIG" ]] && grep -q '"host"' "$BACKUP_CONFIG" 2>/dev/null; then
-      cp -f "$BACKUP_CONFIG" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-      ok "已从系统级备份 /var/backups 自动恢复原有的服务器配置数据！"
-    elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
-      cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-      ok "已从 /root/vps-cluster-manager 自动恢复原有的服务器配置数据！"
-    elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
-      cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-      ok "已从 /tmp 备份自动恢复原有的服务器配置数据！"
+    local restored=false
+    if [[ -f "$ETC_DIR/config.json" ]] && grep -q '"host"' "$ETC_DIR/config.json" 2>/dev/null; then
+      cp -f "$ETC_DIR/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+      ok "已从永久专用备份目录 $ETC_DIR 自动恢复原有的服务器配置数据！"
+      restored=true
+    elif [[ -d "$ETC_ROLL_DIR" ]] && ls "$ETC_ROLL_DIR"/*.json >/dev/null 2>&1; then
+      latest_etc_bak="$(ls -t "$ETC_ROLL_DIR"/*.json 2>/dev/null | head -n1)"
+      if [[ -n "$latest_etc_bak" ]] && grep -q '"host"' "$latest_etc_bak" 2>/dev/null; then
+        cp -f "$latest_etc_bak" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        ok "已从专用时间戳备份 $latest_etc_bak 自动恢复原有的服务器配置数据！"
+        restored=true
+      fi
+    fi
+
+    if [[ "$restored" != "true" ]]; then
+      if [[ -f "$BACKUP_CONFIG" ]] && grep -q '"host"' "$BACKUP_CONFIG" 2>/dev/null; then
+        cp -f "$BACKUP_CONFIG" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        ok "已从系统级备份 /var/backups 自动恢复原有的服务器配置数据！"
+      elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
+        cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        ok "已从 /root/vps-cluster-manager 自动恢复原有的服务器配置数据！"
+      elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
+        cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        ok "已从 /tmp 备份自动恢复原有的服务器配置数据！"
+      fi
     fi
   fi
 
@@ -190,35 +211,53 @@ case "${1:-}" in
     ;;
   update)
     echo "正在升级 VPS Cluster Manager 至最新版本..."
+    mkdir -p /etc/vps-cluster-manager/backups
     mkdir -p /var/backups
+    # 优先在升级前备份至系统专用永久目录
     if [[ -f "$INSTALL_DIR/data/config.json" ]] && grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null; then
+      cp -f "$INSTALL_DIR/data/config.json" "/etc/vps-cluster-manager/config.json" 2>/dev/null || true
+      cp -f "$INSTALL_DIR/data/config.json" "/etc/vps-cluster-manager/backups/config_$(date +%Y%m%d_%H%M%S).json" 2>/dev/null || true
       cp -f "$INSTALL_DIR/data/config.json" "/var/backups/vps-cluster-manager-config.json" 2>/dev/null || true
       cp -f "$INSTALL_DIR/data/config.json" "/tmp/vps_cm_config_backup.json" 2>/dev/null || true
     fi
     cd "$INSTALL_DIR"
     git fetch --all
     git reset --hard origin/main
-    # 升级后若当前无节点记录，自动从多层备份链中寻找含有节点的配置进行恢复
+    # 升级后若当前无节点记录，自动从永久专用备份目录及多层备份链中寻找含有节点的配置进行恢复
     if (! grep -q '"host"' "$INSTALL_DIR/data/config.json" 2>/dev/null); then
-      if [[ -f "/var/backups/vps-cluster-manager-config.json" ]] && grep -q '"host"' "/var/backups/vps-cluster-manager-config.json" 2>/dev/null; then
-        mkdir -p "$INSTALL_DIR/data"
-        cp -f "/var/backups/vps-cluster-manager-config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-        echo "已从 /var/backups 自动恢复服务器节点配置！"
-      elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
-        mkdir -p "$INSTALL_DIR/data"
-        cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-        echo "已从 /root 历史目录自动恢复服务器节点配置！"
-      elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
-        mkdir -p "$INSTALL_DIR/data"
-        cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
-        echo "已从 /tmp 备份自动恢复服务器节点配置！"
+      mkdir -p "$INSTALL_DIR/data"
+      local restored=false
+      if [[ -f "/etc/vps-cluster-manager/config.json" ]] && grep -q '"host"' "/etc/vps-cluster-manager/config.json" 2>/dev/null; then
+        cp -f "/etc/vps-cluster-manager/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+        echo "已从永久专用备份目录 /etc/vps-cluster-manager 自动恢复服务器节点配置！"
+        restored=true
+      elif [[ -d "/etc/vps-cluster-manager/backups" ]] && ls /etc/vps-cluster-manager/backups/*.json >/dev/null 2>&1; then
+        latest_etc="$(ls -t /etc/vps-cluster-manager/backups/*.json 2>/dev/null | head -n1)"
+        if [[ -n "$latest_etc" ]] && grep -q '"host"' "$latest_etc" 2>/dev/null; then
+          cp -f "$latest_etc" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+          echo "已从时间戳备份 $latest_etc 自动恢复服务器节点配置！"
+          restored=true
+        fi
+      fi
+
+      if [[ "$restored" != "true" ]]; then
+        if [[ -f "/var/backups/vps-cluster-manager-config.json" ]] && grep -q '"host"' "/var/backups/vps-cluster-manager-config.json" 2>/dev/null; then
+          cp -f "/var/backups/vps-cluster-manager-config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+          echo "已从 /var/backups 自动恢复服务器节点配置！"
+        elif [[ -f "/root/vps-cluster-manager/data/config.json" ]] && grep -q '"host"' "/root/vps-cluster-manager/data/config.json" 2>/dev/null; then
+          cp -f "/root/vps-cluster-manager/data/config.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+          echo "已从 /root 历史目录自动恢复服务器节点配置！"
+        elif [[ -f "/tmp/vps_cm_config_backup.json" ]] && grep -q '"host"' "/tmp/vps_cm_config_backup.json" 2>/dev/null; then
+          cp -f "/tmp/vps_cm_config_backup.json" "$INSTALL_DIR/data/config.json" 2>/dev/null || true
+          echo "已从 /tmp 备份自动恢复服务器节点配置！"
+        fi
       fi
     fi
     if [[ -f "$INSTALL_DIR/venv/bin/pip" ]]; then
       "$INSTALL_DIR/venv/bin/pip" install --no-cache-dir -r requirements.txt >/dev/null 2>&1 || true
     fi
     systemctl restart "$APP_NAME"
-    echo "🎉 项目已升级至最新版本并重启成功！原有配置完好无损。"
+    echo "🎉 项目已升级至最新版本并重启成功！所有 VPS 节点与配置完好无损。"
     ;;
   uninstall)
     systemctl stop "$APP_NAME" 2>/dev/null || true

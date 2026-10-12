@@ -130,7 +130,7 @@ cd /opt/vps-cluster-manager && git fetch --all && git reset --hard origin/main &
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kzhx666/vps-cluster-manager/main/install.sh | bash
 ```
-> 安装脚本在拉取代码前会自动将当前配置备份至 `/var/backups`，升级完成后自动还原历史 VPS 节点。
+> 🛡️ **永久配置安全保障**：系统在拉取代码前会自动将当前配置保存至独立系统级专用目录 `/etc/vps-cluster-manager/`（及 `/etc/vps-cluster-manager/backups/` 滚动快照库），升级完成后自动还原历史 VPS 节点，永不丢失！
 
 ### 方法四：Docker 容器升级
 ```bash
@@ -139,14 +139,16 @@ cd /opt/vps-cluster-manager && git pull && docker compose up -d --build
 
 ---
 
-### 💡 历史 VPS 数据找回提示
-如果您此前在更改默认安装路径（`/opt`）之前添加过 VPS，旧数据通常保存在原运行目录（例如 `/root/vps-cluster-manager/data/config.json`），只需一条命令复制并重启即可找回：
+### 🛡️ 专属永久备份目录与历史数据找回
+为了彻底杜绝更新导致 VPS 节点配置丢失，系统在底层构建了完全独立于 git 代码库的**永久系统级专用备份目录**：
+- **永久主配置镜像**：`/etc/vps-cluster-manager/config.json`
+- **永久时间戳滚动备份**：`/etc/vps-cluster-manager/backups/config_YYYYMMDD_HHMMSS.json`（保留最近 30 份全量快照）
+- **系统级历史备份**：`/var/backups/vps-cluster-manager-config.json`
+- **浏览器本地冷备份**：浏览器 `localStorage` 自动同步最新节点列表，若后端发生极端空配置时支持前端一键自动回填
+
+如果需要手动还原任意历史备份，直接复制即可：
 ```bash
-cp /root/vps-cluster-manager/data/config.json /opt/vps-cluster-manager/data/config.json && systemctl restart vps-cluster-manager
-```
-或者全局搜索服务器上的备份文件：
-```bash
-find / -name "config.json" 2>/dev/null
+cp /etc/vps-cluster-manager/config.json /opt/vps-cluster-manager/data/config.json && systemctl restart vps-cluster-manager
 ```
 
 ## 📋 目录架构

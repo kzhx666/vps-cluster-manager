@@ -349,24 +349,30 @@ function renderServers() {
       </div>
 
       <div class="server-card-actions">
-        <button class="btn btn-sm btn-primary" onclick="deploySingleServer('${s.id}')">
+        <button class="btn btn-sm btn-primary" onclick="deploySingleServer('${s.id}')" title="部署 Sing-box 核心与节点">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
           部署
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="checkEnvServer('${s.id}')" title="测试 SSH 连通性与底层系统信息">
-          🔍 测延迟
+        <button class="btn btn-sm btn-secondary" onclick="checkEnvServer('${s.id}')" title="测试 SSH 连通性、系统环境与往返延迟 (控制台查看日志)">
+          🔍 测环境
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="inspectSingleServer('${s.id}')" title="健康巡检">
+        <button class="btn btn-sm btn-secondary" onclick="inspectSingleServer('${s.id}')" title="检查核心服务运行状态与延迟 (控制台查看日志)">
           🩺 巡检
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="restartSingleServer('${s.id}')" title="重启 Sing-box 服务进程 (控制台查看日志)">
+          🔄 重启
         </button>
         <button class="btn btn-sm btn-secondary" onclick="testUnlockServer('${s.id}')" title="测试 ChatGPT / YouTube / Netflix 解锁">
           🧪 解锁
         </button>
-        <button class="btn btn-sm btn-ghost" onclick="editServer('${s.id}')" title="修改配置">
+        <button class="btn btn-sm btn-secondary" onclick="editServer('${s.id}')" title="修改配置与端口">
           ✏️ 编辑
         </button>
-        <button class="btn btn-sm btn-danger-ghost" onclick="deleteServer('${s.id}')" title="删除">
-          🗑️
+        <button class="btn btn-sm btn-danger-ghost" onclick="uninstallSingleServer('${s.id}')" title="彻底从服务器卸载 Sing-box、证书与所有配置 (控制台查看日志)">
+          🗑️ 卸载
+        </button>
+        <button class="btn btn-sm btn-ghost" onclick="deleteServer('${s.id}')" title="仅从面板管理列表移除此 VPS (不修改服务器)">
+          ✖ 移除
         </button>
       </div>
     `;
@@ -718,6 +724,16 @@ function openGlobalConfigModal() {
 }
 
 async function saveGlobalConfig() {
+  const saveBtn = document.getElementById('btn-save-global-config');
+  const origBtnText = '保存全局配置';
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = '<span class="status-dot pulsing" style="margin-right:4px;"></span>保存中...';
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
   const payload = {
     push_url: document.getElementById('cfg-push-url').value.trim(),
     push_token: document.getElementById('cfg-push-token').value.trim(),
@@ -738,20 +754,32 @@ async function saveGlobalConfig() {
     const res = await fetch('/api/config/global', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     const data = await res.json();
     if (data.success) {
-      showToast('全局统一配置已成功保存！', 'success');
+      showToast('全局统一策略配置已成功保存！', 'success');
       state.config.global = data.data;
       closeModal('modal-global-config');
     } else {
       showToast(`保存失败: ${data.message}`, 'error');
     }
   } catch (err) {
-    showToast(`保存出错: ${err.message}`, 'error');
+    if (err.name === 'AbortError') {
+      showToast('保存全局配置超时，请检查后端运行状态', 'error');
+    } else {
+      showToast(`保存出错: ${err.message}`, 'error');
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = origBtnText;
+    }
   }
 }
+window.saveGlobalConfig = saveGlobalConfig;
 
 async function testPushTarget() {
   const url = document.getElementById('cfg-push-url').value.trim();
@@ -852,6 +880,11 @@ function openServerModal(serverId = null) {
   }
 
   updateNatPreview();
+  const saveBtn = document.getElementById('btn-save-server');
+  if (saveBtn) {
+    saveBtn.disabled = false;
+    saveBtn.innerHTML = '保存服务器';
+  }
   openModal('modal-server-edit');
 }
 
@@ -901,11 +934,14 @@ function updateNatPreview() {
 
 async function saveServer() {
   const saveBtn = document.getElementById('btn-save-server');
-  const origBtnText = saveBtn ? saveBtn.innerHTML : '保存服务器';
+  const origBtnText = '保存服务器';
   if (saveBtn) {
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<span class="status-dot pulsing" style="margin-right:4px;"></span>保存中...';
   }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
   try {
     const serverId = (document.getElementById('edit-server-id').value || '').trim();
@@ -914,7 +950,6 @@ async function saveServer() {
 
     if (!host) {
       showToast('请输入 VPS IP 或域名', 'error');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.innerHTML = origBtnText; }
       return;
     }
 
@@ -948,7 +983,8 @@ async function saveServer() {
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     const data = await res.json();
     if (data.success) {
@@ -959,8 +995,13 @@ async function saveServer() {
       showToast(`保存失败: ${data.message}`, 'error');
     }
   } catch (err) {
-    showToast(`保存出错: ${err.message}`, 'error');
+    if (err.name === 'AbortError') {
+      showToast('保存请求超时，请检查后端服务是否正常运行', 'error');
+    } else {
+      showToast(`保存出错: ${err.message}`, 'error');
+    }
   } finally {
+    clearTimeout(timeoutId);
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.innerHTML = origBtnText;
@@ -973,6 +1014,57 @@ window.openServerModal = openServerModal;
 function editServer(serverId) {
   openServerModal(serverId);
 }
+window.editServer = editServer;
+
+async function restartSingleServer(serverId) {
+  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const name = s ? (s.name || s.host) : '此服务器';
+
+  showToast(`正在向 [${name}] 下发重启服务指令...`, 'info');
+  try {
+    const res = await fetch('/api/batch_ops', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'restart', server_ids: [serverId] })
+    });
+    const data = await res.json();
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `重启 Sing-box: [${name}]`);
+    } else {
+      showToast(`重启下发失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`重启请求异常: ${err.message}`, 'error');
+  }
+}
+window.restartSingleServer = restartSingleServer;
+
+async function uninstallSingleServer(serverId) {
+  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const name = s ? (s.name || s.host) : '此服务器';
+
+  if (!confirm(`⚠️ 危险操作确认：\n\n确定要在 [${name}] 上彻底卸载 Sing-box、删除所有节点配置、清除证书与 Argo 守护进程吗？\n\n此操作将直接连接服务器并执行彻底卸载清理，全过程实时在控制台展示。`)) {
+    return;
+  }
+
+  showToast(`正在向 [${name}] 下发彻底卸载指令...`, 'info');
+  try {
+    const res = await fetch('/api/batch_ops', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'uninstall', server_ids: [serverId] })
+    });
+    const data = await res.json();
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `彻底卸载清理: [${name}]`);
+    } else {
+      showToast(`卸载下发失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`卸载请求异常: ${err.message}`, 'error');
+  }
+}
+window.uninstallSingleServer = uninstallSingleServer;
 window.editServer = editServer;
 
 async function deleteServer(serverId) {
@@ -1023,11 +1115,13 @@ async function checkEnvServer(serverId) {
   const s = (state.config.servers || []).find(i => i.id === serverId);
   const name = s ? (s.name || s.host) : 'VPS';
 
-  showToast(`正在连接 [${name}] 测试延迟与环境...`, 'info');
+  showToast(`正在发起 [${name}] 的系统环境与网络延迟探测...`, 'info');
   try {
     const res = await fetch(`/api/check_env/${serverId}`, { method: 'POST' });
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `测环境与网络延迟: [${name}]`);
+    } else if (data.success) {
       showToast(`[${name}] ${data.message}`, 'success');
       loadConfig();
     } else {
@@ -1037,19 +1131,24 @@ async function checkEnvServer(serverId) {
     showToast(`检测出错: ${err.message}`, 'error');
   }
 }
+window.checkEnvServer = checkEnvServer;
 
 async function inspectSingleServer(serverId) {
   const s = (state.config.servers || []).find(i => i.id === serverId);
   const name = s ? (s.name || s.host) : 'VPS';
 
-  showToast(`正在对 [${name}] 执行服务状态与网络巡检...`, 'info');
+  showToast(`正在对 [${name}] 发起服务状态与网络巡检...`, 'info');
   try {
-    const res = await fetch(`/api/inspect/${serverId}`, { method: 'POST' });
+    const res = await fetch('/api/inspect_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: [serverId] })
+    });
     const data = await res.json();
-    if (data.success) {
-      const d = data.data;
-      const statusStr = d.singbox_running ? '🟢 服务运行中' : '🔴 核心未在运行';
-      showToast(`[${name}] 巡检完成: ${statusStr}, 延迟: ${d.latency_ms}ms`, d.singbox_running ? 'success' : 'warning');
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `健康巡检: [${name}]`);
+    } else if (data.success) {
+      showToast(`[${name}] 巡检完成`, 'success');
       loadConfig();
     } else {
       showToast(`巡检失败: ${data.message}`, 'error');
@@ -1058,6 +1157,7 @@ async function inspectSingleServer(serverId) {
     showToast(`巡检请求异常: ${err.message}`, 'error');
   }
 }
+window.inspectSingleServer = inspectSingleServer;
 
 async function testUnlockServer(serverId) {
   const s = (state.config.servers || []).find(i => i.id === serverId);
@@ -1175,7 +1275,7 @@ async function inspectAllServers() {
     }
   }
 
-  showToast('已向后台触发全集群并发巡检，正在后台探测各主机...', 'info');
+  showToast('正在向全集群下发健康巡检与延迟探测任务...', 'info');
   try {
     const res = await fetch('/api/inspect_all', {
       method: 'POST',
@@ -1183,9 +1283,11 @@ async function inspectAllServers() {
       body: JSON.stringify({ server_ids: [] })
     });
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, '全集群健康巡检与延迟探测');
+    } else if (data.success) {
       showToast(data.message, 'success');
-      setTimeout(loadConfig, 4000);
+      setTimeout(loadConfig, 3000);
     } else {
       showToast(`巡检失败: ${data.message}`, 'error');
     }
@@ -1193,6 +1295,7 @@ async function inspectAllServers() {
     showToast(`巡检出错: ${err.message}`, 'error');
   }
 }
+window.inspectAllServers = inspectAllServers;
 
 async function inspectSelectedServers() {
   const selected = getSelectedIds();
@@ -1202,7 +1305,7 @@ async function inspectSelectedServers() {
     return;
   }
 
-  showToast(`正在对已选中的 ${count} 台 VPS 执行并发巡检...`, 'info');
+  showToast(`正在对已选中的 ${count} 台 VPS 下发并发巡检任务...`, 'info');
   try {
     const res = await fetch('/api/inspect_all', {
       method: 'POST',
@@ -1210,9 +1313,11 @@ async function inspectSelectedServers() {
       body: JSON.stringify({ server_ids: selected })
     });
     const data = await res.json();
-    if (data.success) {
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `集群健康巡检 (${count}台)`);
+    } else if (data.success) {
       showToast(data.message, 'success');
-      setTimeout(loadConfig, 3000);
+      setTimeout(loadConfig, 2500);
     } else {
       showToast(`巡检失败: ${data.message}`, 'error');
     }
@@ -1475,25 +1580,116 @@ async function uploadConfigFile(e) {
 // ------------------------------------------------------------------------------
 // Real-time Terminal Log Viewer Engine
 // ------------------------------------------------------------------------------
+function clearTerminalLogs() {
+  const linesContainer = document.getElementById('terminal-lines');
+  if (linesContainer) linesContainer.innerHTML = '';
+  const statusEl = document.getElementById('terminal-status-text');
+  if (statusEl) statusEl.textContent = '控制台屏幕已清空';
+}
+window.clearTerminalLogs = clearTerminalLogs;
+
+function updateTerminalTaskSelect(tasksList, activeId) {
+  const sel = document.getElementById('terminal-task-select');
+  if (!sel) return;
+  if (!tasksList || tasksList.length === 0) {
+    sel.style.display = 'none';
+    return;
+  }
+  sel.innerHTML = '';
+  tasksList.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.id;
+    const statusIcon = t.status === 'success' ? '✅' : (t.status === 'error' ? '❌' : '⏳');
+    const timeStr = t.created_at ? t.created_at.slice(11) : '';
+    opt.textContent = `${statusIcon} ${t.server_name || t.type} (${timeStr})`;
+    if (t.id === activeId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.style.display = 'inline-block';
+}
+
+async function switchTerminalTask(taskId) {
+  if (!taskId) return;
+  stopTerminalPolling();
+  state.activeTaskId = taskId;
+  document.getElementById('terminal-lines').innerHTML = '';
+  document.getElementById('terminal-progress-bar').style.width = '15%';
+  document.getElementById('terminal-status-text').textContent = '正在加载任务历史输出...';
+  
+  await pollTaskLogs();
+  try {
+    const res = await fetch(`/api/tasks/${taskId}`);
+    const data = await res.json();
+    if (data.success && data.data && data.data.status === 'running') {
+      state.pollTimer = setInterval(pollTaskLogs, 1200);
+    }
+  } catch (e) {}
+}
+window.switchTerminalTask = switchTerminalTask;
+
 function openTerminal(taskId, title = '任务控制台') {
+  stopTerminalPolling();
   state.activeTaskId = taskId;
   document.getElementById('terminal-title').textContent = title;
   document.getElementById('terminal-step').textContent = '连接并执行中...';
+  document.getElementById('terminal-step').className = 'badge badge-info';
   document.getElementById('terminal-lines').innerHTML = '';
   document.getElementById('terminal-progress-bar').style.width = '10%';
   document.getElementById('terminal-status-text').textContent = '正在实时接收远端输出流...';
 
   openModal('modal-terminal');
+
+  // Sync recent tasks list in selector
+  fetch('/api/tasks/recent').then(r => r.json()).then(d => {
+    if (d.success && d.tasks) {
+      updateTerminalTaskSelect(d.tasks, taskId);
+    }
+  }).catch(() => {});
+
   pollTaskLogs();
   state.pollTimer = setInterval(pollTaskLogs, 1200);
 }
+window.openTerminal = openTerminal;
+
+async function openTerminalModalDirect() {
+  openModal('modal-terminal');
+
+  if (state.activeTaskId) {
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/tasks/recent');
+    const data = await res.json();
+    if (data.success && data.tasks && data.tasks.length > 0) {
+      updateTerminalTaskSelect(data.tasks, data.latest_id);
+      if (data.latest_id) {
+        switchTerminalTask(data.latest_id);
+      }
+    } else {
+      document.getElementById('terminal-title').textContent = '实时任务控制台';
+      document.getElementById('terminal-step').textContent = '控制台就绪';
+      document.getElementById('terminal-step').className = 'badge badge-info';
+      document.getElementById('terminal-server-name').textContent = '当前暂无运行中任务';
+      document.getElementById('terminal-progress-bar').style.width = '100%';
+      document.getElementById('terminal-status-text').textContent = '系统控制台已就绪，随时接收并显示后台任务运行日志';
+      const lines = document.getElementById('terminal-lines');
+      lines.innerHTML = `
+        <div class="terminal-line log-info">[系统就绪] 实时任务控制台已处于待命状态。</div>
+        <div class="terminal-line">[说明] 当您在界面中点击任意主机的【部署】、【测环境】、【巡检】、【重启】或【彻底卸载】时，详细的执行过程与返回结果将自动在此滚屏展示。</div>
+      `;
+    }
+  } catch (err) {
+    console.error('Failed to fetch recent tasks:', err);
+  }
+}
+window.openTerminalModalDirect = openTerminalModalDirect;
 
 function stopTerminalPolling() {
   if (state.pollTimer) {
     clearInterval(state.pollTimer);
     state.pollTimer = null;
   }
-  state.activeTaskId = null;
 }
 
 async function pollTaskLogs() {
@@ -1523,13 +1719,13 @@ async function pollTaskLogs() {
         const lineDiv = document.createElement('div');
         lineDiv.className = 'terminal-line';
 
-        if (lineText.includes('[OK]') || lineText.includes('成功') || lineText.includes('完成')) {
+        if (lineText.includes('[OK]') || lineText.includes('成功') || lineText.includes('完成') || lineText.includes('🎉') || lineText.includes('🟢')) {
           lineDiv.classList.add('log-ok');
-        } else if (lineText.includes('[ERR]') || lineText.includes('错误') || lineText.includes('失败')) {
+        } else if (lineText.includes('[ERR]') || lineText.includes('错误') || lineText.includes('失败') || lineText.includes('❌') || lineText.includes('🔴')) {
           lineDiv.classList.add('log-err');
-        } else if (lineText.includes('[WARN]') || lineText.includes('警告')) {
+        } else if (lineText.includes('[WARN]') || lineText.includes('警告') || lineText.includes('⚠️') || lineText.includes('🟡')) {
           lineDiv.classList.add('log-warn');
-        } else if (lineText.includes('[INFO]')) {
+        } else if (lineText.includes('[INFO]') || lineText.includes('发起') || lineText.includes('正在')) {
           lineDiv.classList.add('log-info');
         }
 

@@ -31,9 +31,13 @@ try:
 except ImportError:
     REQUESTS_AVAILABLE = False
 
-config_lock = threading.Lock()
+config_lock = threading.RLock()
 tasks = {}
-tasks_lock = threading.Lock()
+tasks_lock = threading.RLock()
+
+# Dedicated permanent system backup directory (completely outside git repository)
+ETC_BACKUP_DIR = "/etc/vps-cluster-manager"
+ETC_ROLL_DIR = "/etc/vps-cluster-manager/backups"
 
 DEFAULT_CONFIG = {
     "global": {
@@ -60,8 +64,10 @@ def find_all_backup_configs():
     """Scans all possible disk locations and returns list of candidate file paths."""
     candidates = []
     
-    # 1. Known primary and historical paths
+    # 1. Known primary and historical paths (including dedicated /etc/ paths)
     static_paths = [
+        os.path.join(ETC_BACKUP_DIR, "config.json"),
+        os.path.join(ETC_BACKUP_DIR, "config.json.bak"),
         os.path.join(DATA_DIR, "config.json.bak"),
         os.path.join(DATA_DIR, "config.json.tmp"),
         "/var/backups/vps-cluster-manager-config.json",
@@ -79,17 +85,30 @@ def find_all_backup_configs():
         if os.path.isfile(p):
             candidates.append(p)
 
-    # 2. Check /opt/vps-cluster-manager/data/backups/
+    # 2. Check dedicated permanent /etc/vps-cluster-manager/backups/
+    if os.path.isdir(ETC_ROLL_DIR):
+        try:
+            for f in os.listdir(ETC_ROLL_DIR):
+                if f.endswith('.json'):
+                    fp = os.path.join(ETC_ROLL_DIR, f)
+                    if os.path.isfile(fp) and fp not in candidates:
+                        candidates.append(fp)
+        except Exception:
+            pass
+
+    # 3. Check /opt/vps-cluster-manager/data/backups/
     roll_dir = os.path.join(DATA_DIR, 'backups')
     if os.path.isdir(roll_dir):
         try:
             for f in os.listdir(roll_dir):
                 if f.endswith('.json'):
-                    candidates.append(os.path.join(roll_dir, f))
+                    fp = os.path.join(roll_dir, f)
+                    if os.path.isfile(fp) and fp not in candidates:
+                        candidates.append(fp)
         except Exception:
             pass
 
-    # 3. Check /var/backups/
+    # 4. Check /var/backups/
     if os.path.isdir('/var/backups'):
         try:
             for f in os.listdir('/var/backups'):
@@ -100,7 +119,7 @@ def find_all_backup_configs():
         except Exception:
             pass
 
-    # 4. Check /tmp/
+    # 5. Check /tmp/
     if os.path.isdir('/tmp'):
         try:
             for f in os.listdir('/tmp'):
@@ -213,17 +232,37 @@ def save_config_unlocked(data):
             except Exception:
                 pass
 
-            # 3. Create persistent rolling backup with timestamp
+            # 3. Create persistent rolling backup with timestamp in data/backups
             try:
                 roll_dir = os.path.join(DATA_DIR, 'backups')
                 os.makedirs(roll_dir, exist_ok=True)
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 with open(os.path.join(roll_dir, f"config_{ts}.json"), 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                # Keep up to 20 rolling backups
+                # Keep up to 30 rolling backups
                 all_baks = sorted([os.path.join(roll_dir, f) for f in os.listdir(roll_dir) if f.endswith('.json')])
-                while len(all_baks) > 20:
+                while len(all_baks) > 30:
                     oldest = all_baks.pop(0)
+                    try:
+                        os.remove(oldest)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # 4. Update dedicated system backup in /etc/vps-cluster-manager (never affected by git updates)
+            try:
+                os.makedirs(ETC_ROLL_DIR, exist_ok=True)
+                etc_cfg = os.path.join(ETC_BACKUP_DIR, "config.json")
+                with open(etc_cfg, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                etc_roll_file = os.path.join(ETC_ROLL_DIR, f"config_{ts}.json")
+                with open(etc_roll_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                # Keep up to 30 rolling backups in /etc/vps-cluster-manager/backups
+                etc_baks = sorted([os.path.join(ETC_ROLL_DIR, f) for f in os.listdir(ETC_ROLL_DIR) if f.endswith('.json')])
+                while len(etc_baks) > 30:
+                    oldest = etc_baks.pop(0)
                     try:
                         os.remove(oldest)
                     except Exception:
@@ -1076,70 +1115,76 @@ def check_env(server_id):
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
-    host = server.get("host")
-    port = server.get("port", 22)
-    user = server.get("user", "root")
-    pwd = server.get("password")
-    key = server.get("private_key")
+    sname = server.get("name") or server.get("host")
+    task_id = create_task("check_env", server_id, f"测环境: {sname}")
+    append_task_log(task_id, f"发起对 [{sname}] ({server.get('host')}:{server.get('port', 22)}) 的系统环境与网络延迟测试...", step="准备连接", progress=10)
 
-    runner = SSHRunner(host, port, user, pwd, key, timeout=8)
-    start_t = time.time()
-    try:
-        runner.connect()
-        latency_ms = round((time.time() - start_t) * 1000, 1)
+    def worker():
+        host = server.get("host")
+        port = server.get("port", 22)
+        user = server.get("user", "root")
+        pwd = server.get("password")
+        key = server.get("private_key")
 
-        code, out = runner.run_cmd(
-            "uname -m; cat /etc/os-release 2>/dev/null | grep -E '^(ID|VERSION_ID)=' || true; echo '---BBR_CHECK---'; sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'unknown'; sysctl -n net.core.default_qdisc 2>/dev/null || echo 'unknown'",
-            timeout=15
-        )
-        lines = out.strip().splitlines()
-        arch = lines[0] if len(lines) > 0 else "unknown"
-        os_id = "Linux"
-        bbr_cc = "unknown"
-        bbr_qdisc = "unknown"
+        runner = SSHRunner(host, port, user, pwd, key, timeout=10)
+        start_t = time.time()
+        try:
+            append_task_log(task_id, f"正在建立 SSH 连接到 {host}:{port} (用户: {user})...", step="建立SSH连接", progress=25)
+            runner.connect()
+            latency_ms = round((time.time() - start_t) * 1000, 1)
+            append_task_log(task_id, f"[OK] SSH 连接成功！TCP/SSH往返延迟: {latency_ms}ms", step="检测系统参数", progress=45)
 
-        in_bbr = False
-        bbr_lines = []
-        for line in lines[1:]:
-            if "---BBR_CHECK---" in line:
-                in_bbr = True
-                continue
-            if in_bbr:
-                bbr_lines.append(line.strip())
-            else:
-                if line.startswith("ID="):
-                    os_id = line.replace("ID=", "").strip('"\n ')
+            code, out = runner.run_cmd(
+                "uname -m; cat /etc/os-release 2>/dev/null | grep -E '^(ID|VERSION_ID)=' || true; echo '---BBR_CHECK---'; sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo 'unknown'; sysctl -n net.core.default_qdisc 2>/dev/null || echo 'unknown'",
+                timeout=15
+            )
+            lines = out.strip().splitlines()
+            arch = lines[0] if len(lines) > 0 else "unknown"
+            os_id = "Linux"
+            bbr_cc = "unknown"
+            bbr_qdisc = "unknown"
 
-        if len(bbr_lines) >= 1 and bbr_lines[0]:
-            bbr_cc = bbr_lines[0]
-        if len(bbr_lines) >= 2 and bbr_lines[1]:
-            bbr_qdisc = bbr_lines[1]
+            in_bbr = False
+            bbr_lines = []
+            for line in lines[1:]:
+                if "---BBR_CHECK---" in line:
+                    in_bbr = True
+                    continue
+                if in_bbr:
+                    bbr_lines.append(line.strip())
+                else:
+                    if line.startswith("ID="):
+                        os_id = line.replace("ID=", "").strip('"\n ')
 
-        bbr_str = f"{bbr_cc}+{bbr_qdisc}"
+            if len(bbr_lines) >= 1 and bbr_lines[0]:
+                bbr_cc = bbr_lines[0]
+            if len(bbr_lines) >= 2 and bbr_lines[1]:
+                bbr_qdisc = bbr_lines[1]
 
-        # Update server latency and bbr
-        with config_lock:
-            cur_cfg = load_config()
-            for s in cur_cfg.get("servers", []):
-                if s.get("id") == server_id:
-                    s["latency_ms"] = latency_ms
-                    s["os_info"] = f"{os_id} ({arch})"
-                    s["bbr_info"] = bbr_str
-                    break
-            save_config_unlocked(cur_cfg)
+            bbr_str = f"{bbr_cc}+{bbr_qdisc}"
+            append_task_log(task_id, f"[OK] 系统发行版: {os_id} | CPU架构: {arch} | 网络拥塞算法: {bbr_str}", step="更新配置记录", progress=85)
 
-        return jsonify({
-            "success": True,
-            "latency_ms": latency_ms,
-            "os": os_id,
-            "arch": arch,
-            "bbr": bbr_str,
-            "message": f"连接成功！延迟 {latency_ms}ms, 系统: {os_id} ({arch}), BBR: {bbr_str}"
-        })
-    except Exception as e:
-        return jsonify({"success": False, "message": f"SSH 连接失败: {str(e)}"}), 500
-    finally:
-        runner.close()
+            with config_lock:
+                cur_cfg = load_config()
+                for s in cur_cfg.get("servers", []):
+                    if s.get("id") == server_id:
+                        s["latency_ms"] = latency_ms
+                        s["os_info"] = f"{os_id} ({arch})"
+                        s["bbr_info"] = bbr_str
+                        break
+                save_config_unlocked(cur_cfg)
+
+            append_task_log(task_id, f"🎉 [{sname}] 环境与延迟检测全部完成！延迟: {latency_ms}ms", step="测试完成", progress=100)
+            finish_task(task_id, success=True)
+        except Exception as e:
+            append_task_log(task_id, f"[ERR] 连接检测失败: {str(e)}", step="连接异常", progress=100)
+            finish_task(task_id, success=False, error=str(e))
+        finally:
+            runner.close()
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return jsonify({"success": True, "task_id": task_id, "message": f"已对 [{sname}] 启动环境检测任务"})
 
 @app.route('/api/deploy/<server_id>', methods=['POST'])
 def deploy_server(server_id):
@@ -1188,6 +1233,26 @@ def get_task_status(task_id):
         if not task:
             return jsonify({"success": False, "message": "任务不存在"}), 404
         return jsonify({"success": True, "data": task})
+
+@app.route('/api/tasks/recent', methods=['GET'])
+def get_recent_tasks():
+    with tasks_lock:
+        sorted_tasks = sorted(tasks.values(), key=lambda t: t.get('created_at', ''), reverse=True)
+        recent = []
+        for t in sorted_tasks[:15]:
+            recent.append({
+                "id": t["id"],
+                "type": t.get("type"),
+                "server_id": t.get("server_id"),
+                "server_name": t.get("server_name"),
+                "status": t.get("status"),
+                "progress": t.get("progress"),
+                "step": t.get("step"),
+                "created_at": t.get("created_at"),
+                "log_count": len(t.get("logs", []))
+            })
+        latest_id = sorted_tasks[0]["id"] if sorted_tasks else None
+        return jsonify({"success": True, "tasks": recent, "latest_id": latest_id})
 
 # ------------------------------------------------------------------------------
 # Routes: Cluster Health Inspection & Unlock Testing
@@ -1313,9 +1378,18 @@ def inspect_all():
     if not servers:
         return jsonify({"success": False, "message": "当前没有选定任何 VPS 或集群列表为空"}), 400
 
+    task_desc = f"健康巡检 ({len(servers)}台)" if len(servers) > 1 else f"单机巡检: {servers[0].get('name') or servers[0].get('host')}"
+    task_id = create_task("inspect", "cluster", task_desc)
+    append_task_log(task_id, f"正在对 {len(servers)} 台 VPS 启动健康巡检与延迟探测...", step="准备巡检", progress=5)
+
     def run_all_inspect():
-        for s in servers:
+        total = len(servers)
+        online_count = 0
+        for idx, s in enumerate(servers):
             sid = s.get("id")
+            sname = s.get("name") or s.get("host")
+            pct = int(10 + (idx / total) * 80)
+            append_task_log(task_id, f"[{sname}] ({s.get('host')}:{s.get('port', 22)}) 连接中...", step=f"巡检中 ({idx+1}/{total})", progress=pct)
             res = inspect_server_sync(s)
             with config_lock:
                 cur = load_config()
@@ -1332,9 +1406,21 @@ def inspect_all():
                         break
                 save_config_unlocked(cur)
 
+            if res.get("success"):
+                status_desc = "🟢 服务运行中" if res.get("singbox_running") else "🟡 核心进程未在运行"
+                bbr_desc = res.get("bbr") or "未知"
+                append_task_log(task_id, f"[OK] [{sname}] 巡检完成: {status_desc} | 延迟: {res.get('latency_ms')}ms | BBR: {bbr_desc}")
+                if res.get("singbox_running"):
+                    online_count += 1
+            else:
+                append_task_log(task_id, f"[ERR] [{sname}] 巡检失败: {res.get('error')}")
+
+        append_task_log(task_id, f"🎉 巡检任务全部完成！正常运行: {online_count}/{total} 台", step="巡检完毕", progress=100)
+        finish_task(task_id, success=True)
+
     t = threading.Thread(target=run_all_inspect, daemon=True)
     t.start()
-    return jsonify({"success": True, "message": "已在后台启动全集群并发巡检！"})
+    return jsonify({"success": True, "task_id": task_id, "message": "已启动健康巡检任务"})
 
 @app.route('/api/test_unlock/<server_id>', methods=['POST'])
 def test_unlock(server_id):
@@ -1723,17 +1809,19 @@ def batch_ops():
     if not targets:
         return jsonify({"success": False, "message": "没有选定任何目标 VPS"}), 400
 
+    single_mode = len(targets) == 1
+    s_single_name = targets[0].get("name", targets[0].get("host")) if single_mode else ""
     action_names = {
-        "restart": "批量重启 Sing-box 服务",
-        "update_core": "批量更新 Sing-box 核心至最新版",
-        "reapply_bbr": "批量刷新并激活 BBR+fq",
-        "uninstall": "批量清理卸载 Sing-box"
+        "restart": f"重启服务: [{s_single_name}]" if single_mode else f"批量重启服务 ({len(targets)}台)",
+        "update_core": f"更新核心: [{s_single_name}]" if single_mode else f"批量更新核心 ({len(targets)}台)",
+        "reapply_bbr": f"刷新激活BBR: [{s_single_name}]" if single_mode else f"批量刷新BBR ({len(targets)}台)",
+        "uninstall": f"彻底卸载清理: [{s_single_name}]" if single_mode else f"批量彻底卸载清理 ({len(targets)}台)"
     }
-    action_desc = action_names.get(action, f"批量执行: {action}")
-    task_id = create_task(f"batch_{action}", "cluster", f"{action_desc} ({len(targets)}台)")
+    action_desc = action_names.get(action, f"执行操作: {action}")
+    task_id = create_task(f"batch_{action}", "cluster", action_desc)
 
     def run_ops():
-        append_task_log(task_id, f"正在对 {len(targets)} 台 VPS 并发下发: [{action_desc}]...", progress=10)
+        append_task_log(task_id, f"正在对 {len(targets)} 台 VPS 下发任务: [{action_desc}]...", step="下发指令", progress=10)
         success_count = 0
         concurrency = int(cfg.get("global", {}).get("concurrency", 5))
         sem = threading.Semaphore(concurrency)

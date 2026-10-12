@@ -39,6 +39,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           全局统一配置
         </button>
+        <button id="btn-open-terminal" class="btn btn-secondary" onclick="openTerminalModalDirect()" title="查看所有任务的实时执行控制台与过程输出">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          🖥️ 任务控制台
+        </button>
         <button id="btn-batch-import" class="btn btn-secondary">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
           批量导入
@@ -327,7 +331,7 @@
 
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeModal('modal-global-config')">取消</button>
-        <button id="btn-save-global-config" class="btn btn-primary">保存全局配置</button>
+        <button id="btn-save-global-config" class="btn btn-primary" onclick="saveGlobalConfig()">保存全局配置</button>
       </div>
     </div>
   </div>
@@ -603,11 +607,13 @@
           </div>
         </div>
         <div class="terminal-header-actions">
+          <select id="terminal-task-select" class="form-input form-input-sm" style="display:none; max-width:210px; font-size:12px; height:28px; padding:2px 8px;" onchange="switchTerminalTask(this.value)" title="切换查看近期任务控制台"></select>
           <label class="checkbox-label-sm">
             <input type="checkbox" id="chk-autoscroll" checked>
             <span>自动滚屏</span>
           </label>
           <button id="btn-copy-logs" class="btn btn-sm btn-secondary">复制日志</button>
+          <button id="btn-clear-logs" class="btn btn-sm btn-ghost" onclick="clearTerminalLogs()">清屏</button>
           <button class="modal-close" onclick="closeModal('modal-terminal')">&times;</button>
         </div>
       </div>
