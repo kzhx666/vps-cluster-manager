@@ -49,7 +49,9 @@ DEFAULT_CONFIG = {
         "default_ssh_port": 22,
         "default_ssh_user": "root",
         "install_script_url": "https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh",
-        "concurrency": 5
+        "concurrency": 5,
+        "auto_inspect": False,
+        "auto_inspect_interval": 60
     },
     "servers": []
 }
@@ -332,6 +334,67 @@ ARCH="$(uname -m)"
 
 info "Detected OS: $OS_NAME $OS_VER ($ARCH)"
 
+# ==============================================================================
+# 1. 纯 IPv6 VPS 检测与公共 NAT64 / DNS64 自动打通
+# ==============================================================================
+if ! curl -s4m2 https://1.1.1.1 >/dev/null 2>&1 && ! ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
+  if curl -s6m2 https://[2606:4700:4700::1111] >/dev/null 2>&1 || ping6 -c 1 -W 2 2606:4700:4700::1111 >/dev/null 2>&1; then
+    info "检测到服务器为纯 IPv6 VPS (无直接 IPv4 外网出站路由)！"
+    info "正在自动配置公共 NAT64 / DNS64 翻译解析，打通全球 IPv4 与 GitHub 访问通道..."
+    if ! grep -q "2a01:4f9:c010:3f02::1" /etc/resolv.conf 2>/dev/null; then
+      cp /etc/resolv.conf /etc/resolv.conf.bak 2>/dev/null || true
+      cat > /tmp/resolv.conf <<'EOF_DNS'
+nameserver 2a01:4f9:c010:3f02::1
+nameserver 2a00:1098:2b::1
+nameserver 2a00:1098:2c::1
+EOF_DNS
+      cat /etc/resolv.conf >> /tmp/resolv.conf 2>/dev/null || true
+      cp /tmp/resolv.conf /etc/resolv.conf 2>/dev/null || true
+      rm -f /tmp/resolv.conf
+      info "NAT64 / DNS64 注入完成，纯 IPv6 主机已获得 IPv4 通信能力！"
+    fi
+  fi
+fi
+
+# ==============================================================================
+# 2. 内存检测与智能虚拟内存 (Swap) 自动挂载 (防小内存 OOM 爆死)
+# ==============================================================================
+MEM_TOTAL=$(awk '/MemTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+SWAP_TOTAL=$(awk '/SwapTotal/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+if [ "$MEM_TOTAL" -lt 1048576 ] && [ "$SWAP_TOTAL" -lt 524288 ]; then
+  info "检测到服务器物理内存不足 1GB ($((MEM_TOTAL/1024))MB) 且缺少 Swap！"
+  info "正在创建 1GB 虚拟内存 (Swapfile) 以防止包管理和进程 OOM 爆内存卡死..."
+  if [ ! -f /swapfile ]; then
+    fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 2>/dev/null || true
+    if [ -f /swapfile ]; then
+      chmod 600 /swapfile
+      mkswap /swapfile >/dev/null 2>&1 || true
+      swapon /swapfile >/dev/null 2>&1 || true
+      if ! grep -q "/swapfile" /etc/fstab 2>/dev/null; then
+        echo "/swapfile swap swap defaults 0 0" >> /etc/fstab 2>/dev/null || true
+      fi
+      info "1GB 虚拟内存 (Swapfile) 已成功激活挂载！"
+    fi
+  fi
+fi
+
+# ==============================================================================
+# 3. 清理云厂商 (如甲骨文 Oracle、AWS) 默认入站阻断链并放行
+# ==============================================================================
+info "正在优化防火墙入站规则，清理 Oracle/AWS 默认 REJECT 阻断策略..."
+if command -v iptables >/dev/null 2>&1; then
+  iptables -D INPUT -j REJECT 2>/dev/null || true
+  iptables -D FORWARD -j REJECT 2>/dev/null || true
+  iptables -P INPUT ACCEPT 2>/dev/null || true
+  iptables -P FORWARD ACCEPT 2>/dev/null || true
+fi
+if command -v ip6tables >/dev/null 2>&1; then
+  ip6tables -D INPUT -j REJECT 2>/dev/null || true
+  ip6tables -D FORWARD -j REJECT 2>/dev/null || true
+  ip6tables -P INPUT ACCEPT 2>/dev/null || true
+  ip6tables -P FORWARD ACCEPT 2>/dev/null || true
+fi
+
 # Package Manager Bootstrap
 if command -v apk >/dev/null 2>&1; then
   info "Configuring Alpine Linux (apk)..."
@@ -536,6 +599,11 @@ def deploy_server_worker(task_id, server_id):
         env_exports.append(f"export SB_ENABLE_HY2={1 if protocols.get('hy2', True) else 0}")
         env_exports.append(f"export SB_ENABLE_TUIC={1 if protocols.get('tuic', True) else 0}")
 
+        # Reality SNI (custom or auto-select)
+        reality_sni = server.get("reality_sni", "").strip()
+        if reality_sni:
+            env_exports.append(f"export REALITY_SNI=\"{reality_sni}\"")
+
         # Domain & ACME
         if custom_domain:
             env_exports.append(f"export INPUT_DOMAIN=\"{custom_domain}\"")
@@ -679,6 +747,7 @@ def add_server():
         "port_mode": data.get('port_mode', 'auto'),
         "port_range": data.get('port_range', '').strip(),
         "domain": data.get('domain', '').strip(),
+        "reality_sni": data.get('reality_sni', '').strip(),
         "argo_enabled": bool(data.get('argo_enabled', False)),
         "argo_domain": data.get('argo_domain', '').strip(),
         "argo_token": data.get('argo_token', '').strip(),
@@ -701,7 +770,7 @@ def update_server(server_id):
 
     updatable_fields = [
         'name', 'host', 'port', 'user', 'auth_type', 'password', 'private_key',
-        'tag_main', 'tag_argo', 'port_mode', 'port_range', 'domain',
+        'tag_main', 'tag_argo', 'port_mode', 'port_range', 'domain', 'reality_sni',
         'argo_enabled', 'argo_domain', 'argo_token'
     ]
     for field in updatable_fields:
@@ -1160,6 +1229,177 @@ def import_config():
         return jsonify({"success": True, "message": f"成功恢复配置！包含 {len(data['servers'])} 台服务器"})
     except Exception as e:
         return jsonify({"success": False, "message": f"解析配置文件失败: {str(e)}"}), 400
+
+# ------------------------------------------------------------------------------
+# Routes: Batch Operations (Restart, Update Core, Reapply BBR, Uninstall)
+# ------------------------------------------------------------------------------
+@app.route('/api/batch_ops', methods=['POST'])
+def batch_ops():
+    data = request.get_json() or {}
+    action = data.get("action", "")  # 'restart' | 'update_core' | 'reapply_bbr' | 'uninstall'
+    server_ids = data.get("server_ids")  # list or empty for all
+
+    cfg = load_config()
+    servers = cfg.get("servers", [])
+    if server_ids and len(server_ids) > 0:
+        targets = [s for s in servers if s.get("id") in server_ids]
+    else:
+        targets = servers
+
+    if not targets:
+        return jsonify({"success": False, "message": "没有选定任何目标 VPS"}), 400
+
+    action_names = {
+        "restart": "批量重启 Sing-box 服务",
+        "update_core": "批量更新 Sing-box 核心至最新版",
+        "reapply_bbr": "批量刷新并激活 BBR+fq",
+        "uninstall": "批量清理卸载 Sing-box"
+    }
+    action_desc = action_names.get(action, f"批量执行: {action}")
+    task_id = create_task(f"batch_{action}", "cluster", f"{action_desc} ({len(targets)}台)")
+
+    def run_ops():
+        append_task_log(task_id, f"正在对 {len(targets)} 台 VPS 并发下发: [{action_desc}]...", progress=10)
+        success_count = 0
+        concurrency = int(cfg.get("global", {}).get("concurrency", 5))
+        sem = threading.Semaphore(concurrency)
+
+        def worker(target_srv):
+            nonlocal success_count
+            with sem:
+                host = target_srv.get("host")
+                port = target_srv.get("port", 22)
+                user = target_srv.get("user", "root")
+                pwd = target_srv.get("password")
+                key = target_srv.get("private_key")
+                name = target_srv.get("name", host)
+                runner = SSHRunner(host, port, user, pwd, key, timeout=10)
+                try:
+                    runner.connect()
+                    if action == "restart":
+                        cmd = "systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null; sleep 1; systemctl is-active sing-box 2>/dev/null || rc-service sing-box status 2>/dev/null || pgrep -f sing-box"
+                        _, out = runner.run_cmd(cmd, timeout=15)
+                        status_ok = "active" in out.lower() or "running" in out.lower()
+                        append_task_log(task_id, f"[{name}] 重启完毕: {'🟢 服务运行中' if status_ok else '🟡 状态待确认'}")
+                        success_count += 1
+                    elif action == "update_core":
+                        cmd = r'''
+LATEST="$(curl -s4m6 https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//' || echo "")"
+ARCH="$(uname -m)"
+case "$ARCH" in x86_64) A="amd64" ;; aarch64|arm64) A="arm64" ;; *) A="" ;; esac
+if [ -n "$LATEST" ] && [ -n "$A" ]; then
+  wget -qO /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${A}.tar.gz" || true
+  if [ -s /tmp/sb.tar.gz ]; then
+    tar -xzf /tmp/sb.tar.gz -C /tmp/
+    cp -f /tmp/sing-box-${LATEST}-linux-${A}/sing-box /usr/local/bin/sing-box
+    chmod +x /usr/local/bin/sing-box
+    rm -rf /tmp/sb.tar.gz /tmp/sing-box-${LATEST}-linux-${A}
+    systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null || true
+    echo "SUCCESS: v${LATEST}"
+  else
+    echo "FAIL: 下载核心失败"
+  fi
+else
+  echo "FAIL: 无法获取最新版本号或未知架构"
+fi
+'''
+                        _, out = runner.run_cmd(cmd, timeout=60)
+                        append_task_log(task_id, f"[{name}] 核心更新: {out.strip()[:80]}")
+                        success_count += 1
+                    elif action == "reapply_bbr":
+                        cmd = r'''
+modprobe tcp_bbr3 2>/dev/null || true
+modprobe tcp_bbr 2>/dev/null || true
+AVAIL="$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null || echo '')"
+TARGET="bbr"
+if echo "$AVAIL" | grep -qw "bbr3"; then TARGET="bbr3"; fi
+sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
+sysctl -w net.ipv4.tcp_congestion_control=${TARGET} >/dev/null 2>&1 || true
+echo "BBR: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)+$(sysctl -n net.core.default_qdisc 2>/dev/null)"
+'''
+                        _, out = runner.run_cmd(cmd, timeout=15)
+                        append_task_log(task_id, f"[{name}] {out.strip()}")
+                        success_count += 1
+                    elif action == "uninstall":
+                        cmd = r'''
+systemctl stop sing-box 2>/dev/null || rc-service sing-box stop 2>/dev/null || true
+systemctl disable sing-box 2>/dev/null || rc-update del sing-box default 2>/dev/null || true
+systemctl stop cloudflared 2>/dev/null || rc-service cloudflared stop 2>/dev/null || true
+pkill -f sing-box 2>/dev/null || true
+pkill -f cloudflared 2>/dev/null || true
+rm -rf /etc/sing-box /usr/local/bin/sing-box /usr/local/bin/sb /usr/local/bin/sb-hop.sh /etc/systemd/system/sing-box.service /etc/init.d/sing-box /usr/local/bin/cloudflared
+iptables -t nat -F SB_HOP 2>/dev/null || true
+echo "UNINSTALLED_OK"
+'''
+                        runner.run_cmd(cmd, timeout=20)
+                        append_task_log(task_id, f"[{name}] Sing-box 服务与配置已清理完毕")
+                        success_count += 1
+                        with config_lock:
+                            cur = load_config()
+                            for s in cur.get("servers", []):
+                                if s.get("id") == target_srv.get("id"):
+                                    s["status"] = "idle"
+                                    s["last_check_result"] = {}
+                                    break
+                            save_config_unlocked(cur)
+                except Exception as e:
+                    append_task_log(task_id, f"[{name}] 执行失败: {str(e)}")
+                finally:
+                    runner.close()
+
+        threads = []
+        for s in targets:
+            th = threading.Thread(target=worker, args=(s,), daemon=True)
+            threads.append(th)
+            th.start()
+
+        for th in threads:
+            th.join()
+
+        finish_task(task_id, success=True)
+        append_task_log(task_id, f"[{action_desc}] 全部执行完毕！成功完成: {success_count}/{len(targets)} 台", progress=100)
+
+    t = threading.Thread(target=run_ops, daemon=True)
+    t.start()
+    return jsonify({"success": True, "task_id": task_id})
+
+# ------------------------------------------------------------------------------
+# Periodic Background Inspector Worker
+# ------------------------------------------------------------------------------
+def background_periodic_inspector():
+    while True:
+        try:
+            cfg = load_config()
+            g = cfg.get("global", {})
+            if g.get("auto_inspect", False):
+                interval_min = int(g.get("auto_inspect_interval", 60))
+                servers = cfg.get("servers", [])
+                if servers:
+                    for s in servers:
+                        sid = s.get("id")
+                        res = inspect_server_sync(s)
+                        with config_lock:
+                            cur = load_config()
+                            for target in cur.get("servers", []):
+                                if target.get("id") == sid:
+                                    target["last_check_result"] = res
+                                    if res.get("success"):
+                                        target["status"] = "online" if res.get("singbox_running") else "warning"
+                                        target["latency_ms"] = res.get("latency_ms")
+                                        if res.get("bbr"):
+                                            target["bbr_info"] = res.get("bbr")
+                                    else:
+                                        target["status"] = "error"
+                                    break
+                            save_config_unlocked(cur)
+                time.sleep(max(interval_min * 60, 60))
+            else:
+                time.sleep(30)
+        except Exception:
+            time.sleep(30)
+
+inspector_thread = threading.Thread(target=background_periodic_inspector, daemon=True)
+inspector_thread.start()
 
 # ------------------------------------------------------------------------------
 # Entrypoint

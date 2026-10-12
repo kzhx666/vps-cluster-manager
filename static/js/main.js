@@ -337,6 +337,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-deploy-all')?.addEventListener('click', deployAllServers);
   document.getElementById('btn-inspect-all')?.addEventListener('click', inspectAllServers);
 
+  // Batch ops dropdown menu toggle
+  const batchOpsToggle = document.getElementById('btn-batch-ops-toggle');
+  const batchOpsMenu = document.getElementById('batch-ops-menu');
+  if (batchOpsToggle && batchOpsMenu) {
+    batchOpsToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      batchOpsMenu.classList.toggle('show');
+    });
+    document.addEventListener('click', () => {
+      batchOpsMenu.classList.remove('show');
+    });
+  }
+
   document.getElementById('btn-export-config')?.addEventListener('click', () => {
     window.location.href = '/api/export';
   });
@@ -397,6 +410,9 @@ function openGlobalConfigModal() {
   document.getElementById('cfg-script-url').value = g.install_script_url || '';
   document.getElementById('cfg-concurrency').value = g.concurrency || 5;
 
+  document.getElementById('cfg-auto-inspect').checked = g.auto_inspect === true;
+  document.getElementById('cfg-auto-inspect-interval').value = g.auto_inspect_interval || 60;
+
   openModal('modal-global-config');
 }
 
@@ -412,7 +428,9 @@ async function saveGlobalConfig() {
       tuic: document.getElementById('cfg-proto-tuic').checked
     },
     install_script_url: document.getElementById('cfg-script-url').value.trim(),
-    concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5
+    concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5,
+    auto_inspect: document.getElementById('cfg-auto-inspect').checked,
+    auto_inspect_interval: parseInt(document.getElementById('cfg-auto-inspect-interval').value) || 60
   };
 
   try {
@@ -486,6 +504,7 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-port-mode').value = server.port_mode || 'auto';
     document.getElementById('srv-port-range').value = server.port_range || '';
     document.getElementById('srv-domain').value = server.domain || '';
+    document.getElementById('srv-reality-sni').value = server.reality_sni || '';
 
     document.getElementById('srv-argo-enabled').checked = !!server.argo_enabled;
     document.getElementById('srv-argo-domain').value = server.argo_domain || '';
@@ -511,6 +530,7 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-port-mode').value = 'auto';
     document.getElementById('srv-port-range').value = '';
     document.getElementById('srv-domain').value = '';
+    document.getElementById('srv-reality-sni').value = '';
 
     document.getElementById('srv-argo-enabled').checked = false;
     document.getElementById('srv-argo-domain').value = '';
@@ -592,6 +612,7 @@ async function saveServer() {
     port_mode: document.getElementById('srv-port-mode').value,
     port_range: document.getElementById('srv-port-range').value.trim(),
     domain: document.getElementById('srv-domain').value.trim(),
+    reality_sni: document.getElementById('srv-reality-sni').value.trim(),
     argo_enabled: document.getElementById('srv-argo-enabled').checked,
     argo_domain: document.getElementById('srv-argo-domain').value.trim(),
     argo_token: document.getElementById('srv-argo-token').value.trim()
@@ -787,6 +808,45 @@ async function inspectAllServers() {
     showToast(`巡检出错: ${err.message}`, 'error');
   }
 }
+
+async function triggerBatchOp(action) {
+  const batchOpsMenu = document.getElementById('batch-ops-menu');
+  if (batchOpsMenu) batchOpsMenu.classList.remove('show');
+
+  const count = (state.config.servers || []).length;
+  if (count === 0) {
+    showToast('当前集群内暂无 VPS，请先添加主机', 'error');
+    return;
+  }
+
+  const actionMap = {
+    restart: { title: '批量重启 Sing-box 服务', confirm: `确定要向全部 ${count} 台 VPS 发送指令，批量重启 Sing-box 核心进程吗？` },
+    update_core: { title: '批量升级 Sing-box 核心', confirm: `确定要在全部 ${count} 台 VPS 上并发执行官方核心升级任务吗？` },
+    reapply_bbr: { title: '批量刷新激活 BBR+fq', confirm: `确定要在全部 ${count} 台 VPS 上刷新并永久激活 BBRv3 / BBR + fq 拥塞控制吗？` },
+    uninstall: { title: '批量清理卸载 Sing-box', confirm: `⚠️ 高危操作：确定要在全部 ${count} 台 VPS 上彻底停止并卸载 Sing-box 吗？` }
+  };
+
+  const meta = actionMap[action] || { title: '批量运维任务', confirm: `确定执行批量操作 [${action}] 吗？` };
+  if (!confirm(meta.confirm)) return;
+
+  showToast(`正在向集群提交【${meta.title}】批量任务...`, 'info');
+  try {
+    const res = await fetch('/api/batch_ops', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: action, server_ids: [] })
+    });
+    const data = await res.json();
+    if (data.success && data.task_id) {
+      openTerminal(data.task_id, `${meta.title} (集群实时控制台)`);
+    } else {
+      showToast(`下发批量任务失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`批量任务请求异常: ${err.message}`, 'error');
+  }
+}
+window.triggerBatchOp = triggerBatchOp;
 
 async function doBatchImport() {
   const text = document.getElementById('batch-import-text').value.trim();

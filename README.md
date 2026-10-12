@@ -26,14 +26,38 @@
 - 传统 Standalone 申请证书需监听 80 端口，在 NAT VPS 或 80 端口被封的主机上必定失败；
 - 本系统在全局配置一次 Cloudflare Token，VPS 只需填入域名，即可全自动通过 Cloudflare API 完成 DNS-01 验证，即使 NAT VPS 也能 100% 成功颁发 Let's Encrypt 证书！
 
-### 4. 最小化 Linux 与 Alpine 环境自举 & NTP 时钟校准
+### 4. 纯 IPv6 独轮车 VPS 自动注入 NAT64 / DNS64
+- 无独立 IPv4 地址的 Pure IPv6 VPS 无法直接访问 GitHub、IPv4 源服务器或管理面板；
+- 控制台在环境检测阶段自动探测 IPv4 连通性，对于 IPv6-Only 主机自动注入知名稳定 DNS64 解析服务（如 Hetzner / Trex），打通 IPv4 流量出口，无缝拉取 GitHub 脚本与官方二进制文件。
+
+### 5. 极低内存 (128M / 256M / 512M) 自动挂载 1GB Swapfile
+- 小内存 VPS 编译或并发下载解压时极易被 Linux OOM Killer 杀掉；
+- 部署流水线自动识别物理内存 `< 1GB` 且未开启 Swap 的机器，自动安全创建并启用 1GB `/swapfile` 并写入 `/etc/fstab`，确保 Sing-box 与脚本平稳运行不闪退。
+
+### 6. 甲骨文 / AWS 等云原生自带防火墙自动清障
+- Oracle Cloud、AWS 镜像预置严格的 `iptables` / `ip6tables` REJECT 或 DROP 规则，导致即使安全组放行端口仍无法连通；
+- 系统在环境自举中自动清理系统内阻碍入站流量的 DROP/REJECT 规则，并将默认 INPUT 策略设为 ACCEPT；部署前先执行端口占用排查，避免同端口冲突。
+
+### 7. BBRv3 / BBR + fq 拥塞控制深度适配与持久化
+- 优先探测并激活最新的 BBRv3（如高版本 XanMod / 原生支持内核），若不支持则自动激活标准 BBR + fq；
+- 规则固化至 `/etc/sysctl.d/99-bbr.conf`，彻底杜绝 cloud-init 覆盖或重启失效。
+
+### 8. Reality 专属伪装域名 (SNI) 单机定制与测速优选
+- 默认支持并发对国内友好 CDN 节点进行 TLS 1.3 握手时延测速优选；
+- 支持为每台 VPS 单独指定专属伪装域名（例如 `swdist.apple.com`、`dl.google.com`），满足不同机房、不同阻断策略的灵活应对。
+
+### 9. 最小化 Linux 与 Alpine 环境自举 & NTP 时钟校准
 - 纯净机或 Alpine 镜像缺少 `curl`, `wget`, `jq`, `tar`, `bash` 等基础工具；
 - 控制台在部署前自动执行底层自举脚本：
   - 兼容 `apk` (Alpine Linux)、`apt-get` (Debian/Ubuntu)、`dnf`/`yum` (CentOS/Alma/Rocky/Fedora)、`pacman` (Arch)；
   - 自动通过 `chrony` 或 `ntpdate` 执行 NTP 毫秒级对时（彻底避免 Reality 协议因时间偏差 >90s 导致客户端无法握手）；
   - 自动适配 Alpine 的 `openrc` 与标准系统的 `systemd`。
 
-### 5. 实时可视化终端抽屉与流媒体解锁检测
+### 10. 后台定时静默巡检与批量运维工具箱
+- **定时自动健康巡检**：可在全局配置中自定义巡检周期（如 60 分钟），后台守护线程定时探测各 VPS 进程与延迟，面板随时展示最新健康状况；
+- **批量运维下拉菜单**：一键并发执行批量重启 Sing-box、批量升级 Sing-box 官方核心、批量刷新激活 BBRv3、批量彻底卸载清理，实时日志控制台全程滚动输出。
+
+### 11. 实时可视化终端抽屉与流媒体解锁检测
 - 部署任务具备独立实时日志通道，前台黑色终端控制台自动逐行滚动展示远端构建日志；
 - 一键集群健康巡检：Ping 延迟、Sing-box 进程、监听端口、Argo 状态；
 - 一键流媒体与 AI 解锁测试：自动检测 ChatGPT、YouTube Premium、Netflix 解锁等级。
