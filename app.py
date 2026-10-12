@@ -849,6 +849,7 @@ def deploy_server_worker(task_id, server_id):
         argo_enabled = server.get("argo_enabled", False)
         argo_domain = server.get("argo_domain", "").strip()
         argo_token = clean_argo_token(server.get("argo_token", ""))
+        argo_is_on = bool(argo_enabled) and str(argo_enabled).lower() not in ('false', '0', '')
 
         env_exports = [
             "export AUTO_INSTALL=1",
@@ -889,10 +890,15 @@ def deploy_server_worker(task_id, server_id):
             else:
                 env_exports.append("export SB_ACME_MODE=\"standalone\"")
 
-        # Argo
-        if argo_enabled and argo_domain and argo_token:
+        # Argo (Dual export for maximum compatibility)
+        if argo_is_on and argo_domain and argo_token:
             env_exports.append(f"export SB_ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export SB_ARGO_TOKEN=\"{argo_token}\"")
+            env_exports.append(f"export ARGO_DOMAIN=\"{argo_domain}\"")
+            env_exports.append(f"export ARGO_TOKEN=\"{argo_token}\"")
+
+        argo_status_desc = f"已启用 ({argo_domain})" if (argo_is_on and argo_domain and argo_token) else "未启用"
+        append_task_log(task_id, f"部署参数就绪: 端口策略 [{port_info['allocated_summary']}], Argo 隧道 [{argo_status_desc}]", progress=55)
 
         # Command to run installer
         deploy_cmd = f"""
