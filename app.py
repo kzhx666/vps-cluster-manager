@@ -97,6 +97,28 @@ def load_config():
         for k, v in DEFAULT_CONFIG["global"].items():
             if k not in data.get("global", {}):
                 data.setdefault("global", {})[k] = v
+
+        # Auto-migrate and normalize legacy server subscription tags:
+        # tag_main must be [name]本机, tag_argo must be [name]优选
+        modified_tags = False
+        for s in data.get("servers", []):
+            base_name = (s.get("name") or s.get("host") or "").strip()
+            if not base_name:
+                continue
+
+            tag_m = (s.get("tag_main") or "").strip()
+            if not tag_m or tag_m == base_name or tag_m == s.get("host", "").strip():
+                s["tag_main"] = f"{base_name}本机"
+                modified_tags = True
+
+            tag_a = (s.get("tag_argo") or "").strip()
+            if not tag_a or tag_a.endswith("-Argo") or tag_a == base_name or tag_a == s.get("host", "").strip():
+                s["tag_argo"] = f"{base_name}优选"
+                modified_tags = True
+
+        if modified_tags:
+            save_config_unlocked(data)
+
         return data
 
 def save_config_unlocked(data):
@@ -615,8 +637,13 @@ def deploy_server_worker(task_id, server_id):
         push_token = global_cfg.get("push_token", "")
         auto_push = 1 if global_cfg.get("auto_push", True) else 0
 
-        tag_main = server.get("tag_main", "").strip() or f"{server_name}本机"
-        tag_argo = server.get("tag_argo", "").strip() or f"{server_name}优选"
+        tag_main = server.get("tag_main", "").strip()
+        if not tag_main or tag_main == server_name or tag_main == server.get("host"):
+            tag_main = f"{server_name}本机"
+
+        tag_argo = server.get("tag_argo", "").strip()
+        if not tag_argo or tag_argo.endswith("-Argo") or tag_argo == server_name or tag_argo == server.get("host"):
+            tag_argo = f"{server_name}优选"
 
         custom_domain = server.get("domain", "").strip()
         cf_dns_token = global_cfg.get("cf_dns_token", "").strip()
@@ -785,8 +812,13 @@ def add_server():
 
     server_id = str(uuid.uuid4())
     srv_name = (data.get('name') or host).strip()
-    tag_main = (data.get('tag_main') or '').strip() or f"{srv_name}本机"
-    tag_argo = (data.get('tag_argo') or '').strip() or f"{srv_name}优选"
+    tag_main = (data.get('tag_main') or '').strip()
+    if not tag_main or tag_main == srv_name or tag_main == host:
+        tag_main = f"{srv_name}本机"
+
+    tag_argo = (data.get('tag_argo') or '').strip()
+    if not tag_argo or tag_argo.endswith("-Argo") or tag_argo == srv_name or tag_argo == host:
+        tag_argo = f"{srv_name}优选"
 
     server = {
         "id": server_id,
@@ -839,16 +871,25 @@ def update_server(server_id):
             elif field == 'name':
                 server['name'] = str(data['name']).strip() or server.get('host', '')
             elif field == 'tag_main':
-                server['tag_main'] = str(data['tag_main']).strip() or f"{server.get('name', server.get('host'))}本机"
+                val = str(data['tag_main']).strip()
+                s_name = server.get('name', server.get('host'))
+                if not val or val == s_name:
+                    val = f"{s_name}本机"
+                server['tag_main'] = val
             elif field == 'tag_argo':
-                server['tag_argo'] = str(data['tag_argo']).strip() or f"{server.get('name', server.get('host'))}优选"
+                val = str(data['tag_argo']).strip()
+                s_name = server.get('name', server.get('host'))
+                if not val or val.endswith('-Argo') or val == s_name:
+                    val = f"{s_name}优选"
+                server['tag_argo'] = val
             else:
                 server[field] = data[field]
 
-    if not server.get('tag_main'):
-        server['tag_main'] = f"{server.get('name', server.get('host'))}本机"
-    if not server.get('tag_argo'):
-        server['tag_argo'] = f"{server.get('name', server.get('host'))}优选"
+    s_name = server.get('name', server.get('host'))
+    if not server.get('tag_main') or server.get('tag_main') == s_name:
+        server['tag_main'] = f"{s_name}本机"
+    if not server.get('tag_argo') or server.get('tag_argo', '').endswith('-Argo') or server.get('tag_argo') == s_name:
+        server['tag_argo'] = f"{s_name}优选"
 
     save_config(cfg)
     return jsonify({"success": True, "data": server})
@@ -1462,11 +1503,12 @@ def batch_import():
             "auth_type": "password",
             "password": item.get("password", ""),
             "private_key": "",
-            "tag_main": alias,
-            "tag_argo": f"{alias}-Argo",
+            "tag_main": f"{alias}本机",
+            "tag_argo": f"{alias}优选",
             "port_mode": "auto",
             "port_range": "",
             "domain": "",
+            "reality_sni": "",
             "argo_enabled": False,
             "argo_domain": "",
             "argo_token": "",

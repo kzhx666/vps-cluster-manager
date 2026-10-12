@@ -718,9 +718,17 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-auth-type').value = server.auth_type || 'password';
     document.getElementById('srv-password').value = server.password || '';
     document.getElementById('srv-key').value = server.private_key || '';
+    let displayTagMain = (server.tag_main || '').trim();
+    if (!displayTagMain || displayTagMain === baseName || displayTagMain === server.host) {
+      displayTagMain = baseName ? baseName + '本机' : '';
+    }
+    let displayTagArgo = (server.tag_argo || '').trim();
+    if (!displayTagArgo || displayTagArgo.endsWith('-Argo') || displayTagArgo === baseName || displayTagArgo === server.host) {
+      displayTagArgo = baseName ? baseName + '优选' : '';
+    }
 
-    document.getElementById('srv-tag-main').value = server.tag_main || (baseName ? baseName + '本机' : '');
-    document.getElementById('srv-tag-argo').value = server.tag_argo || (baseName ? baseName + '优选' : '');
+    document.getElementById('srv-tag-main').value = displayTagMain;
+    document.getElementById('srv-tag-argo').value = displayTagArgo;
 
     document.getElementById('srv-port-mode').value = server.port_mode || 'auto';
     document.getElementById('srv-port-range').value = server.port_range || '';
@@ -832,8 +840,8 @@ async function saveServer() {
     const srvName = document.getElementById('srv-name').value.trim() || host;
     let tagMain = document.getElementById('srv-tag-main').value.trim();
     let tagArgo = document.getElementById('srv-tag-argo').value.trim();
-    if (!tagMain) tagMain = srvName + '本机';
-    if (!tagArgo) tagArgo = srvName + '优选';
+    if (!tagMain || tagMain === srvName || tagMain === host) tagMain = srvName + '本机';
+    if (!tagArgo || tagArgo.endsWith('-Argo') || tagArgo === srvName || tagArgo === host) tagArgo = srvName + '优选';
 
     const payload = {
       name: srvName,
