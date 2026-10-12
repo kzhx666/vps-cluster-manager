@@ -909,7 +909,7 @@ chmod +x /tmp/sb_install.sh
 rm -f /tmp/sb_install.sh
 """
         append_task_log(task_id, "开始执行 Sing-box 核心协议集群自动化部署...", step="部署 Sing-box 极速核心", progress=60)
-        code, out = runner.run_cmd(deploy_cmd, log_callback=log_cb, timeout=400)
+        code, out = runner.run_cmd(deploy_cmd, log_callback=log_cb, timeout=800)
         if code != 0:
             raise Exception(f"安装脚本执行返回非 0 状态码 ({code})")
 
