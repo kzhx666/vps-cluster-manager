@@ -261,7 +261,7 @@ function renderServers() {
 
     // Argo tag
     let argoTagHtml = s.argo_enabled && s.argo_domain 
-      ? `<span class="pill-tag tag-argo">Argo: ${s.argo_domain}</span>` 
+      ? `<span class="pill-tag tag-argo">Argo: ${escapeHtml(s.argo_domain)} (${(s.argo_transport === 'ws') ? 'WS' : 'xHTTP'})</span>` 
       : '';
 
     // BBR badge
@@ -846,6 +846,7 @@ function openServerModal(serverId = null) {
 
     document.getElementById('srv-argo-enabled').checked = !!server.argo_enabled;
     document.getElementById('srv-argo-domain').value = server.argo_domain || '';
+    document.getElementById('srv-argo-transport').value = server.argo_transport || 'xhttp';
     document.getElementById('srv-argo-token').value = server.argo_token || '';
 
     const isKey = server.auth_type === 'private_key';
@@ -872,6 +873,7 @@ function openServerModal(serverId = null) {
 
     document.getElementById('srv-argo-enabled').checked = false;
     document.getElementById('srv-argo-domain').value = '';
+    document.getElementById('srv-argo-transport').value = 'xhttp';
     document.getElementById('srv-argo-token').value = '';
 
     document.getElementById('grp-password').style.display = 'block';
@@ -975,6 +977,7 @@ async function saveServer() {
       reality_sni: document.getElementById('srv-reality-sni').value.trim(),
       argo_enabled: document.getElementById('srv-argo-enabled').checked,
       argo_domain: document.getElementById('srv-argo-domain').value.trim(),
+      argo_transport: document.getElementById('srv-argo-transport').value || 'xhttp',
       argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)
     };
 

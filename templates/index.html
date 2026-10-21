@@ -483,6 +483,18 @@
                 <input type="text" id="srv-argo-domain" placeholder="argo-hk.example.com">
               </div>
               <div class="form-group col-6">
+                <label for="srv-argo-transport">穿透传输协议:</label>
+                <select id="srv-argo-transport" class="form-control">
+                  <option value="xhttp" selected>xHTTP (H3/UDP) [推荐 OpenClash / 现代客户端极速优选]</option>
+                  <option value="ws">WebSocket (经典兼容模式)</option>
+                </select>
+                <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
+                  🚀 推荐 xHTTP：承接 HTTP/3 (QUIC) 边缘加速，OpenClash 原生畅享防 DPI 阻断
+                </small>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group col-12">
                 <label for="srv-argo-token">Cloudflare Tunnel Token:</label>
                 <input type="text" id="srv-argo-token" placeholder="粘贴整行命令或 Token (支持自动提取 eyJ...)" autocomplete="off">
                 <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">

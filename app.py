@@ -901,12 +901,15 @@ def deploy_server_worker(task_id, server_id):
 
         # Argo (Dual export for maximum compatibility)
         if argo_is_on and argo_domain and argo_token:
+            argo_trans = server.get('argo_transport', 'xhttp')
             env_exports.append(f"export SB_ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export SB_ARGO_TOKEN=\"{argo_token}\"")
+            env_exports.append(f"export SB_ARGO_TRANSPORT=\"{argo_trans}\"")
             env_exports.append(f"export ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export ARGO_TOKEN=\"{argo_token}\"")
+            env_exports.append(f"export ARGO_TRANSPORT=\"{argo_trans}\"")
 
-        argo_status_desc = f"已启用 ({argo_domain})" if (argo_is_on and argo_domain and argo_token) else "未启用"
+        argo_status_desc = f"已启用 ({argo_domain} | {server.get('argo_transport', 'xhttp')})" if (argo_is_on and argo_domain and argo_token) else "未启用"
         append_task_log(task_id, f"部署参数就绪: 端口策略 [{port_info['allocated_summary']}], Argo 隧道 [{argo_status_desc}]", progress=55)
 
         # Command to run installer with multi-CDN mirror fallback and strict exit code verification
@@ -1083,6 +1086,7 @@ def add_server():
         "reality_sni": data.get('reality_sni', '').strip(),
         "argo_enabled": bool(data.get('argo_enabled', False)),
         "argo_domain": data.get('argo_domain', '').strip(),
+        "argo_transport": data.get('argo_transport', 'xhttp'),
         "argo_token": clean_argo_token(data.get('argo_token', '')),
         "status": "idle",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1104,7 +1108,7 @@ def update_server(server_id):
     updatable_fields = [
         'name', 'host', 'port', 'user', 'auth_type', 'password', 'private_key',
         'tag_main', 'tag_argo', 'port_mode', 'port_range', 'domain', 'reality_sni',
-        'argo_enabled', 'argo_domain', 'argo_token'
+        'argo_enabled', 'argo_domain', 'argo_transport', 'argo_token'
     ]
     for field in updatable_fields:
         if field in data:
@@ -1112,6 +1116,8 @@ def update_server(server_id):
                 server[field] = int(data[field] or 22)
             elif field == 'argo_enabled':
                 server[field] = bool(data[field])
+            elif field == 'argo_transport':
+                server['argo_transport'] = 'ws' if str(data[field]).lower() == 'ws' else 'xhttp'
             elif field == 'argo_token':
                 server[field] = clean_argo_token(data[field])
             elif field == 'name':
@@ -1862,6 +1868,7 @@ def batch_import():
             "reality_sni": "",
             "argo_enabled": False,
             "argo_domain": "",
+            "argo_transport": "xhttp",
             "argo_token": "",
             "status": "online" if item.get("success") else "idle",
             "latency": item.get("latency", 0),
