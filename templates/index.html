@@ -167,12 +167,45 @@
           <span class="text-dim text-sm">已选批量操作：</span>
           <button class="btn btn-sm btn-primary" onclick="deploySelectedServers()" title="并发部署已选主机">🚀 部署已选</button>
           <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">🩺 巡检</button>
+          <button class="btn btn-sm btn-secondary" onclick="openCommandModalForSelected()" title="向已选 VPS 批量发送 Shell 命令">💻 批量命令</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选 Sing-box">🔄 重启</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级核心">⬆️ 升核心</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新 BBR">⚡ BBR</button>
           <button class="btn btn-sm btn-danger-outline" onclick="triggerBatchOp('uninstall', getSelectedIds())" title="彻底卸载已选节点的所有组件与服务">🗑️ 彻底卸载</button>
           <button class="btn btn-sm btn-danger-ghost" onclick="batchDeleteSelected()" title="从面板管理列表中批量移除">❌ 移出面板</button>
           <button class="btn btn-sm btn-ghost" onclick="clearSelection()" title="取消所有选择">✖️ 取消</button>
+        </div>
+      </section>
+
+      <!-- Quick Shell Command Execution Bar (自由发送 Shell 命令) -->
+      <section class="command-bar-section" id="command-bar-section">
+        <div class="cmd-bar-card">
+          <div class="cmd-bar-top">
+            <div class="cmd-target-indicator" id="cmd-target-indicator">
+              <span class="cmd-target-badge" id="cmd-target-badge">🎯 发送目标: 全部 VPS</span>
+              <span class="cmd-target-detail" id="cmd-target-detail">(共 0 台)</span>
+            </div>
+            <div class="cmd-quick-pills">
+              <span class="cmd-pills-label">快捷预设:</span>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('systemctl status sing-box --no-pager | head -n12')" title="查看 Sing-box 核心运行状态">🟢 节点状态</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('free -h && echo &quot;--- 根分区 ---&quot; && df -h /')" title="查看内存与根分区磁盘占用">📊 内存磁盘</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('echo &quot;IPv4: $(curl -s4m4 ip.sb || echo 无)&quot; && echo &quot;IPv6: $(curl -s6m4 ip.sb || echo 无)&quot;')" title="探测公网出口 IPv4 与 IPv6">🌐 出口IP</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('systemctl restart sing-box; sleep 1; systemctl is-active sing-box')" title="立即重启 Sing-box 并确认状态">🔄 重启核心</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('sysctl net.ipv4.tcp_congestion_control net.core.default_qdisc')" title="查看 TCP 拥塞算法与排队策略">⚡ 检查BBR</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('uname -a && cat /etc/os-release | grep PRETTY_NAME')" title="查看 Linux 内核与操作系统版本">🖥️ 系统信息</button>
+              <button type="button" class="cmd-pill" onclick="setAndRunQuickCmd('ss -lntup | grep -E &quot;sing-box|cloudflared|sshd&quot;')" title="查看核心监听端口与进程">🔌 监听端口</button>
+            </div>
+          </div>
+          <div class="cmd-input-row">
+            <div class="cmd-input-wrapper">
+              <span class="cmd-prompt-prefix">$</span>
+              <input type="text" id="quick-cmd-input" class="cmd-input" placeholder="输入任意 Shell 命令 (支持多选批量发送或单机发送，如: free -h, df -h, uptime)... 按回车直接下发" onkeydown="handleQuickCmdKeydown(event)">
+            </div>
+            <button type="button" class="btn btn-primary btn-cmd-send" onclick="executeQuickCommand()" id="btn-quick-cmd-send">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              发送执行
+            </button>
+          </div>
         </div>
       </section>
 
@@ -690,6 +723,58 @@
     </div>
   </div>
 
+  <!-- ========================================================================= -->
+  <!-- MODAL 6: Interactive Remote Shell Command Execution & Output              -->
+  <!-- ========================================================================= -->
+  <div id="modal-cmd-exec" class="modal-backdrop">
+    <div class="modal-dialog modal-xl modal-cmd-dialog">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div class="modal-icon icon-cyan">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          </div>
+          <div>
+            <h2 class="modal-title">远程 Shell 命令执行控制台</h2>
+            <div class="cmd-modal-meta">
+              <span id="cmd-modal-stats" class="badge badge-info">准备就绪</span>
+              <span id="cmd-modal-target-desc" class="meta-label">目标: -</span>
+            </div>
+          </div>
+        </div>
+        <div class="cmd-modal-header-actions">
+          <button class="btn btn-sm btn-secondary" onclick="copyCmdExecOutput()" title="复制当前窗口中的命令执行结果">📋 复制结果</button>
+          <button class="btn btn-sm btn-ghost" onclick="reRunModalCmd()" title="重新执行当前命令">🔄 再次执行</button>
+          <button class="modal-close" onclick="closeModal('modal-cmd-exec')">&times;</button>
+        </div>
+      </div>
+
+      <!-- Server Tabs Navigation -->
+      <div class="cmd-tabs-bar" id="cmd-tabs-bar">
+        <!-- Dynamically generated tab buttons: [📑 全部输出汇总], [VPS-1 🟢], [VPS-2 🟢]... -->
+      </div>
+
+      <div class="modal-body cmd-modal-body">
+        <!-- Terminal screen output -->
+        <div id="cmd-terminal-screen" class="cmd-terminal-screen">
+          <div id="cmd-terminal-content" class="cmd-terminal-content">
+            <div class="cmd-empty-hint">请输入命令并点击发送...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer cmd-modal-footer">
+        <div class="cmd-modal-input-row">
+          <span class="cmd-prompt-prefix">$</span>
+          <input type="text" id="modal-cmd-input" class="cmd-input" placeholder="输入下一条 Shell 命令直接发送..." onkeydown="handleModalCmdKeydown(event)">
+          <button class="btn btn-primary" onclick="runModalCommand()" id="btn-modal-cmd-send">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            发送
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Floating Batch Actions Dock (悬浮多选快捷操作栏) -->
   <aside id="floating-batch-bar" class="floating-batch-bar" style="display: none;">
     <div class="floating-batch-container">
@@ -703,6 +788,9 @@
         </button>
         <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">
           🩺 巡检
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="openCommandModalForSelected()" title="向已选主机批量发送 Shell 命令">
+          💻 批量命令
         </button>
         <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选主机 Sing-box 核心">
           🔄 重启

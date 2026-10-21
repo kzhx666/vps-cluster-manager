@@ -1314,6 +1314,448 @@ body.dark-theme {
   flex-wrap: wrap;
 }
 
+/* ==============================================================================
+   Card Drag-and-Drop Reordering Styles
+   ============================================================================== */
+.card-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: grab;
+  transition: all 0.2s ease;
+  user-select: none;
+  opacity: 0.65;
+}
+
+.card-drag-handle:hover {
+  color: var(--color-cyan);
+  background: rgba(6, 182, 212, 0.12);
+  opacity: 1;
+}
+
+.card-drag-handle:active {
+  cursor: grabbing;
+}
+
+.server-card {
+  user-select: none;
+}
+
+.server-card.dragging {
+  opacity: 0.38 !important;
+  border: 1.5px dashed var(--color-cyan) !important;
+  transform: scale(0.985);
+  box-shadow: 0 0 25px rgba(6, 182, 212, 0.45) !important;
+  transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+/* ==============================================================================
+   Quick Shell Command Execution Bar Styles
+   ============================================================================== */
+.command-bar-section {
+  margin-bottom: 24px;
+}
+
+.cmd-bar-card {
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(6, 182, 212, 0.28);
+  border-radius: var(--radius-lg);
+  padding: 16px 20px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.cmd-bar-card:hover {
+  border-color: rgba(6, 182, 212, 0.45);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.42);
+}
+
+.cmd-bar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.cmd-target-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmd-target-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f8fafc;
+  transition: all 0.25s ease;
+}
+
+.cmd-target-badge.badge-highlight {
+  background: rgba(6, 182, 212, 0.2);
+  border-color: var(--color-cyan);
+  color: #67e8f9;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.3);
+}
+
+.cmd-target-detail {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.cmd-quick-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cmd-pills-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.cmd-pill {
+  padding: 3px 10px;
+  border-radius: 14px;
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.cmd-pill:hover {
+  background: #1e293b;
+  color: var(--color-cyan);
+  border-color: rgba(6, 182, 212, 0.4);
+  transform: translateY(-1px);
+}
+
+.cmd-input-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.cmd-input-wrapper {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  background: #060a12;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  padding: 0 14px;
+  transition: all 0.25s ease;
+}
+
+.cmd-input-wrapper:focus-within {
+  border-color: var(--color-cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.2);
+}
+
+.cmd-prompt-prefix {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--color-cyan);
+  font-size: 15px;
+  margin-right: 10px;
+  user-select: none;
+}
+
+.cmd-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #f8fafc;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  padding: 10px 0;
+  outline: none;
+}
+
+.btn-cmd-send {
+  padding: 9px 22px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 12px rgba(6, 182, 212, 0.35);
+}
+
+/* ==============================================================================
+   Terminal Command Execution Modal Styles
+   ============================================================================== */
+.modal-cmd-dialog {
+  max-width: 1050px;
+  width: 95vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 88vh;
+  padding: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(6, 182, 212, 0.35);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+}
+
+.modal-cmd-dialog .modal-header {
+  padding: 18px 24px;
+  background: rgba(15, 23, 42, 0.98);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cmd-modal-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cmd-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmd-tabs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 20px;
+  background: #090e18;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.cmd-tabs-bar::-webkit-scrollbar {
+  height: 5px;
+}
+
+.cmd-tabs-bar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.cmd-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.cmd-tab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.cmd-tab.active {
+  background: rgba(6, 182, 212, 0.16);
+  color: var(--color-cyan);
+  border-color: rgba(6, 182, 212, 0.45);
+  font-weight: 600;
+}
+
+.cmd-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 380px;
+  max-height: 540px;
+  background: #060910;
+}
+
+.cmd-terminal-screen {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.cmd-run-info-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.cmd-run-info-banner code {
+  background: rgba(6, 182, 212, 0.15);
+  color: #67e8f9;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.cmd-server-block {
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(15, 23, 42, 0.6);
+  margin-bottom: 14px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.cmd-server-block.server-ok {
+  border-left: 3.5px solid var(--color-emerald);
+}
+
+.cmd-server-block.server-fail {
+  border-left: 3.5px solid var(--color-rose);
+}
+
+.cmd-server-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(0, 0, 0, 0.28);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.cmd-server-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.cmd-status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.cmd-status-indicator.online {
+  background: var(--color-emerald);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.cmd-status-indicator.error {
+  background: var(--color-rose);
+  box-shadow: 0 0 6px rgba(244, 63, 94, 0.7);
+}
+
+.cmd-server-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-duration {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.cmd-exit-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.cmd-exit-badge.success {
+  background: rgba(16, 185, 129, 0.15);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+}
+
+.cmd-exit-badge.error {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, 0.35);
+}
+
+.cmd-server-output {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #cbd5e1;
+  background: #070b12;
+}
+
+.cmd-server-output code {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.cmd-modal-footer {
+  padding: 14px 20px;
+  background: rgba(15, 23, 42, 0.98);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.cmd-modal-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  background: #060a12;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md);
+  padding: 4px 8px 4px 14px;
+  transition: all 0.25s ease;
+}
+
+.cmd-modal-input-row:focus-within {
+  border-color: var(--color-cyan);
+  box-shadow: 0 0 0 3px rgba(6, 182, 212, 0.18);
+}
+
+.cmd-empty-hint {
+  text-align: center;
+  padding: 50px 20px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.cmd-error-block {
+  padding: 16px 20px;
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  border-radius: 8px;
+  color: #fda4af;
+  font-size: 13px;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
   .app-header {
@@ -1347,4 +1789,13 @@ body.dark-theme {
     gap: 10px;
     justify-content: center;
   }
+  .cmd-bar-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .cmd-input-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
+

@@ -2130,6 +2130,116 @@ echo "UNINSTALLED_OK"
     return jsonify({"success": True, "task_id": task_id})
 
 # ------------------------------------------------------------------------------
+# Routes: Reorder Servers & Custom Shell Command Execution
+# ------------------------------------------------------------------------------
+@app.route('/api/servers/reorder', methods=['POST'])
+def reorder_servers():
+    """Update order of servers in config.json to match user-defined drag-and-drop order."""
+    data = request.get_json() or {}
+    new_ids = data.get("server_ids", [])
+    if not isinstance(new_ids, list):
+        return jsonify({"success": False, "message": "参数格式错误"}), 400
+
+    with config_lock:
+        cfg = load_config()
+        id_map = {s.get("id"): s for s in cfg.get("servers", [])}
+        reordered = []
+        for sid in new_ids:
+            if sid in id_map:
+                reordered.append(id_map.pop(sid))
+        # Keep any remaining servers not explicitly in new_ids at the end
+        for remaining in id_map.values():
+            reordered.append(remaining)
+
+        cfg["servers"] = reordered
+        save_config_unlocked(cfg)
+
+    return jsonify({"success": True, "message": "VPS 排序已更新保存"})
+
+@app.route('/api/server/exec_cmd', methods=['POST'])
+def exec_custom_cmd():
+    """Execute arbitrary shell command on specified or all VPSs concurrently and return structured outputs."""
+    data = request.get_json() or {}
+    cmd = (data.get("cmd") or "").strip()
+    server_ids = data.get("server_ids")
+    timeout = int(data.get("timeout") or 30)
+
+    if not cmd:
+        return jsonify({"success": False, "message": "执行命令不能为空"}), 400
+
+    cfg = load_config()
+    servers = cfg.get("servers", [])
+    if server_ids and len(server_ids) > 0:
+        targets = [s for s in servers if s.get("id") in server_ids]
+    else:
+        targets = servers
+
+    if not targets:
+        return jsonify({"success": False, "message": "未找到任何目标 VPS"}), 400
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def run_single(srv):
+        s_id = srv.get("id")
+        s_name = srv.get("name") or srv.get("host")
+        s_host = srv.get("host")
+        s_port = srv.get("port", 22)
+        user = srv.get("user", "root")
+        pwd = srv.get("password")
+        key = srv.get("private_key")
+
+        runner = SSHRunner(s_host, s_port, user, pwd, key, timeout=10)
+        t_start = time.time()
+        try:
+            runner.connect()
+            code, out = runner.run_cmd(cmd, timeout=timeout)
+            duration = round((time.time() - t_start) * 1000)
+            return {
+                "id": s_id,
+                "name": s_name,
+                "host": s_host,
+                "port": s_port,
+                "success": (code == 0),
+                "code": code,
+                "output": strip_ansi(out),
+                "duration_ms": duration,
+                "error": ""
+            }
+        except Exception as ex:
+            duration = round((time.time() - t_start) * 1000)
+            return {
+                "id": s_id,
+                "name": s_name,
+                "host": s_host,
+                "port": s_port,
+                "success": False,
+                "code": -1,
+                "output": "",
+                "duration_ms": duration,
+                "error": str(ex)
+            }
+        finally:
+            runner.close()
+
+    max_w = min(16, max(1, len(targets)))
+    with ThreadPoolExecutor(max_workers=max_w) as executor:
+        results = list(executor.map(run_single, targets))
+
+    success_count = sum(1 for r in results if r["success"])
+    fail_count = len(results) - success_count
+
+    return jsonify({
+        "success": True,
+        "cmd": cmd,
+        "total": len(targets),
+        "success_count": success_count,
+        "fail_count": fail_count,
+        "results": results
+    })
+
+
+
+# ------------------------------------------------------------------------------
 # Periodic Background Inspector Worker
 # ------------------------------------------------------------------------------
 def background_periodic_inspector():

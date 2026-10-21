@@ -2,6 +2,8 @@
 // VPS CLUSTER MANAGER - CLIENT-SIDE APPLICATION SCRIPT
 // ==============================================================================
 
+let draggedCard = null;
+
 const state = {
   config: { global: {}, servers: [] },
   filter: 'all',
@@ -9,7 +11,11 @@ const state = {
   selectedIds: new Set(),
   activeTaskId: null,
   pollTimer: null,
-  activeServerId: null
+  activeServerId: null,
+  cmdTargetIds: [],
+  lastExecutedCmd: '',
+  lastCmdResults: [],
+  activeCmdTab: 'all'
 };
 
 function getVisibleServers() {
@@ -229,6 +235,8 @@ function renderServers() {
   filtered.forEach(s => {
     const card = document.createElement('div');
     card.className = 'server-card';
+    card.setAttribute('draggable', 'true');
+    card.dataset.id = s.id;
     const isSelected = state.selectedIds.has(s.id);
     if (isSelected) card.classList.add('selected');
 
@@ -296,6 +304,16 @@ function renderServers() {
       <div class="server-card-header">
         <div class="server-title-group">
           <div style="display:flex; align-items:center; gap:8px;">
+            <div class="card-drag-handle" title="按住可自由拖拽调整卡片排列顺序" onclick="event.stopPropagation();">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="8" cy="6" r="1.5"></circle>
+                <circle cx="16" cy="6" r="1.5"></circle>
+                <circle cx="8" cy="12" r="1.5"></circle>
+                <circle cx="16" cy="12" r="1.5"></circle>
+                <circle cx="8" cy="18" r="1.5"></circle>
+                <circle cx="16" cy="18" r="1.5"></circle>
+              </svg>
+            </div>
             <label class="custom-checkbox-wrapper card-chk-wrap" onclick="event.stopPropagation();" title="勾选/取消勾选此 VPS">
               <input type="checkbox" class="server-chk" data-id="${s.id}" ${isSelected ? 'checked' : ''} onchange="toggleServerSelect('${s.id}', this.checked)">
               <span class="custom-checkmark"></span>
@@ -305,7 +323,7 @@ function renderServers() {
               ${osHtml}
             </div>
           </div>
-          <div class="server-endpoint" title="点击复制 IP (${escapeHtml(s.host)})" onclick="event.stopPropagation(); copyToClipboard('${escapeHtml(s.host)}', '已复制 IP: ${escapeHtml(s.host)}')" style="margin-left: 28px;">
+          <div class="server-endpoint" title="点击复制 IP (${escapeHtml(s.host)})" onclick="event.stopPropagation(); copyToClipboard('${escapeHtml(s.host)}', '已复制 IP: ${escapeHtml(s.host)}')" style="margin-left: 52px;">
             <span>${escapeHtml(s.host)}:${s.port}</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
           </div>
@@ -353,6 +371,9 @@ function renderServers() {
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
           部署
         </button>
+        <button class="btn btn-sm btn-secondary" onclick="openCmdForSingleServer('${s.id}')" title="向此 VPS 发送任意 Shell 命令">
+          💻 命令
+        </button>
         <button class="btn btn-sm btn-secondary" onclick="checkEnvServer('${s.id}')" title="测试 SSH 连通性、系统环境与往返延迟 (控制台查看日志)">
           🔍 测环境
         </button>
@@ -377,6 +398,7 @@ function renderServers() {
       </div>
     `;
 
+    setupCardDragEvents(card, s.id);
     grid.appendChild(card);
   });
   updateSelectionUI();
@@ -469,8 +491,423 @@ function updateSelectionUI() {
       chkAll.indeterminate = false;
     }
   }
+
+  updateCmdTargetIndicator();
 }
 window.updateSelectionUI = updateSelectionUI;
+
+// ------------------------------------------------------------------------------
+// Card Drag and Drop Reordering Handlers
+// ------------------------------------------------------------------------------
+function setupCardDragEvents(card, serverId) {
+  card.addEventListener('dragstart', (e) => {
+    // Avoid dragging when clicking on inputs, buttons, checkboxes or labels
+    if (['INPUT', 'BUTTON', 'A', 'LABEL', 'SELECT'].includes(e.target.tagName)) {
+      e.preventDefault();
+      return;
+    }
+    draggedCard = card;
+    card.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', serverId);
+  });
+
+  card.addEventListener('dragend', () => {
+    if (draggedCard) {
+      draggedCard.classList.remove('dragging');
+      draggedCard = null;
+    }
+    const grid = document.getElementById('server-grid');
+    if (!grid) return;
+    const cards = Array.from(grid.querySelectorAll('.server-card'));
+    const newOrder = cards.map(c => c.dataset.id).filter(Boolean);
+    persistServerOrder(newOrder);
+  });
+}
+
+async function persistServerOrder(newOrder) {
+  if (!newOrder || newOrder.length === 0) return;
+
+  const currentServers = state.config.servers || [];
+  const oldOrder = currentServers.map(s => s.id);
+  const isSame = oldOrder.length === newOrder.length && oldOrder.every((id, idx) => id === newOrder[idx]);
+  if (isSame) return;
+
+  // Reorder local state
+  const map = new Map(currentServers.map(s => [s.id, s]));
+  const reordered = [];
+  newOrder.forEach(id => {
+    if (map.has(id)) {
+      reordered.push(map.get(id));
+      map.delete(id);
+    }
+  });
+  map.forEach(s => reordered.push(s));
+  state.config.servers = reordered;
+
+  try {
+    localStorage.setItem('vps_cm_servers_backup', JSON.stringify(reordered));
+  } catch(e) {}
+
+  showToast('VPS 卡片顺序已更新', 'info');
+
+  try {
+    await fetch('/api/servers/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server_ids: newOrder })
+    });
+  } catch (err) {
+    console.error('Failed to save server reorder:', err);
+  }
+}
+window.persistServerOrder = persistServerOrder;
+
+// ------------------------------------------------------------------------------
+// Remote Shell Command Execution Handlers
+// ------------------------------------------------------------------------------
+function updateCmdTargetIndicator() {
+  const badge = document.getElementById('cmd-target-badge');
+  const detail = document.getElementById('cmd-target-detail');
+  if (!badge) return;
+
+  const totalServers = (state.config.servers || []).length;
+  const count = state.selectedIds.size;
+  if (count > 0) {
+    badge.textContent = `🎯 发送目标: 已勾选 ${count} 台 VPS`;
+    badge.classList.add('badge-highlight');
+    if (detail) detail.textContent = `(点击执行将下发至勾选的 ${count} 台机器)`;
+  } else {
+    badge.textContent = `🎯 发送目标: 全部 VPS`;
+    badge.classList.remove('badge-highlight');
+    if (detail) detail.textContent = `(共 ${totalServers} 台，可勾选单台或多台机器单独发送)`;
+  }
+}
+
+function setAndRunQuickCmd(cmd) {
+  const input = document.getElementById('quick-cmd-input');
+  if (input) input.value = cmd;
+  executeQuickCommand();
+}
+window.setAndRunQuickCmd = setAndRunQuickCmd;
+
+function handleQuickCmdKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    executeQuickCommand();
+  }
+}
+window.handleQuickCmdKeydown = handleQuickCmdKeydown;
+
+function handleModalCmdKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    runModalCommand();
+  }
+}
+window.handleModalCmdKeydown = handleModalCmdKeydown;
+
+function openCmdForSingleServer(serverId) {
+  const server = (state.config.servers || []).find(s => s.id === serverId);
+  if (!server) return;
+  state.cmdTargetIds = [serverId];
+  openModal('modal-cmd-exec');
+
+  const targetDesc = document.getElementById('cmd-modal-target-desc');
+  if (targetDesc) {
+    targetDesc.textContent = `单机目标: [${server.name || server.host}] (${server.host}:${server.port})`;
+  }
+  const modalInput = document.getElementById('modal-cmd-input');
+  if (modalInput) {
+    setTimeout(() => {
+      modalInput.focus();
+      modalInput.select();
+    }, 100);
+  }
+}
+window.openCmdForSingleServer = openCmdForSingleServer;
+
+function openCommandModalForSelected() {
+  const selected = getSelectedIds();
+  state.cmdTargetIds = selected;
+  openModal('modal-cmd-exec');
+
+  const targetDesc = document.getElementById('cmd-modal-target-desc');
+  if (targetDesc) {
+    if (selected.length > 0) {
+      targetDesc.textContent = `批量目标: 已勾选 ${selected.length} 台 VPS`;
+    } else {
+      targetDesc.textContent = `全量目标: 全部 ${(state.config.servers || []).length} 台 VPS`;
+    }
+  }
+  const modalInput = document.getElementById('modal-cmd-input');
+  if (modalInput) {
+    setTimeout(() => {
+      modalInput.focus();
+      modalInput.select();
+    }, 100);
+  }
+}
+window.openCommandModalForSelected = openCommandModalForSelected;
+
+function executeQuickCommand() {
+  const quickInput = document.getElementById('quick-cmd-input');
+  const cmd = (quickInput ? quickInput.value : '').trim();
+  if (!cmd) {
+    showToast('请输入要执行的 Shell 命令', 'warning');
+    if (quickInput) quickInput.focus();
+    return;
+  }
+
+  const selected = getSelectedIds();
+  state.cmdTargetIds = selected;
+
+  const modalInput = document.getElementById('modal-cmd-input');
+  if (modalInput) modalInput.value = cmd;
+
+  openModal('modal-cmd-exec');
+  dispatchCmdExecution(cmd, state.cmdTargetIds);
+}
+window.executeQuickCommand = executeQuickCommand;
+
+function runModalCommand() {
+  const modalInput = document.getElementById('modal-cmd-input');
+  const cmd = (modalInput ? modalInput.value : '').trim();
+  if (!cmd) {
+    showToast('请输入要执行的 Shell 命令', 'warning');
+    if (modalInput) modalInput.focus();
+    return;
+  }
+  dispatchCmdExecution(cmd, state.cmdTargetIds);
+}
+window.runModalCommand = runModalCommand;
+
+function reRunModalCmd() {
+  if (!state.lastExecutedCmd) {
+    showToast('当前没有可重新执行的命令', 'info');
+    return;
+  }
+  const modalInput = document.getElementById('modal-cmd-input');
+  if (modalInput) modalInput.value = state.lastExecutedCmd;
+  dispatchCmdExecution(state.lastExecutedCmd, state.cmdTargetIds);
+}
+window.reRunModalCmd = reRunModalCmd;
+
+async function dispatchCmdExecution(cmd, targetIds) {
+  state.lastExecutedCmd = cmd;
+  const statsEl = document.getElementById('cmd-modal-stats');
+  const targetDesc = document.getElementById('cmd-modal-target-desc');
+  const screen = document.getElementById('cmd-terminal-content');
+  const tabsBar = document.getElementById('cmd-tabs-bar');
+  const btnSend = document.getElementById('btn-modal-cmd-send');
+
+  const targetsCount = targetIds && targetIds.length > 0 ? targetIds.length : (state.config.servers || []).length;
+  if (targetDesc) {
+    if (targetIds && targetIds.length === 1) {
+      const s = (state.config.servers || []).find(x => x.id === targetIds[0]);
+      targetDesc.textContent = s ? `单机目标: [${s.name || s.host}]` : `目标: 1 台 VPS`;
+    } else {
+      targetDesc.textContent = targetIds && targetIds.length > 0 ? `批量目标: ${targetIds.length} 台 VPS` : `全量目标: 全部 ${targetsCount} 台 VPS`;
+    }
+  }
+
+  if (statsEl) {
+    statsEl.className = 'badge badge-info';
+    statsEl.innerHTML = `⏳ 正在连接 ${targetsCount} 台服务器并发执行...`;
+  }
+  if (btnSend) btnSend.disabled = true;
+
+  if (tabsBar) tabsBar.innerHTML = '';
+  if (screen) {
+    screen.innerHTML = `
+      <div class="cmd-running-state">
+        <div class="cmd-run-info-banner">
+          <span>命令: <code>${escapeHtml(cmd)}</code></span>
+          <span style="color:var(--color-cyan);">⏳ 正在并发建立 SSH 连接并执行命令...</span>
+        </div>
+        <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">
+          服务器执行中，请稍候...
+        </div>
+      </div>
+    `;
+  }
+
+  try {
+    const res = await fetch('/api/server/exec_cmd', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cmd: cmd,
+        server_ids: targetIds,
+        timeout: 35
+      })
+    });
+    const data = await res.json();
+    if (!data.success) {
+      if (statsEl) {
+        statsEl.className = 'badge badge-danger';
+        statsEl.textContent = `执行失败: ${data.message}`;
+      }
+      if (screen) {
+        screen.innerHTML = `<div class="cmd-error-block">❌ 错误: ${escapeHtml(data.message)}</div>`;
+      }
+      return;
+    }
+
+    state.lastCmdResults = data.results || [];
+    state.activeCmdTab = 'all';
+
+    if (statsEl) {
+      statsEl.className = data.fail_count === 0 ? 'badge badge-success' : (data.success_count === 0 ? 'badge badge-danger' : 'badge badge-warning');
+      statsEl.textContent = `共 ${data.total} 台 | 🟢 成功 ${data.success_count} | 🔴 失败 ${data.fail_count}`;
+    }
+
+    renderCmdTabsAndScreen();
+  } catch (err) {
+    if (statsEl) {
+      statsEl.className = 'badge badge-danger';
+      statsEl.textContent = `网络错误: ${err.message}`;
+    }
+    if (screen) {
+      screen.innerHTML = `<div class="cmd-error-block">❌ 客户端通信异常: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (btnSend) btnSend.disabled = false;
+  }
+}
+
+function renderCmdTabsAndScreen() {
+  const tabsBar = document.getElementById('cmd-tabs-bar');
+  const results = state.lastCmdResults || [];
+  if (!tabsBar) return;
+
+  tabsBar.innerHTML = '';
+
+  // Tab: All Summary
+  const allTab = document.createElement('button');
+  allTab.type = 'button';
+  allTab.className = `cmd-tab ${state.activeCmdTab === 'all' ? 'active' : ''}`;
+  allTab.innerHTML = `📑 全部输出汇总 (${results.length})`;
+  allTab.onclick = () => switchCmdTab('all');
+  tabsBar.appendChild(allTab);
+
+  // Individual Server Tabs
+  results.forEach(r => {
+    const tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = `cmd-tab ${state.activeCmdTab === r.id ? 'active' : ''}`;
+    const statusIcon = r.success ? '🟢' : '🔴';
+    tab.innerHTML = `${statusIcon} ${escapeHtml(r.name || r.host)} <small style="opacity:0.75; font-size:11px;">(${r.duration_ms}ms)</small>`;
+    tab.onclick = () => switchCmdTab(r.id);
+    tabsBar.appendChild(tab);
+  });
+
+  renderCmdScreenContent();
+}
+
+function switchCmdTab(tabId) {
+  state.activeCmdTab = tabId;
+  const tabsBar = document.getElementById('cmd-tabs-bar');
+  if (tabsBar) {
+    const buttons = tabsBar.querySelectorAll('.cmd-tab');
+    buttons.forEach((b, idx) => {
+      if (idx === 0 && tabId === 'all') b.classList.add('active');
+      else if (idx > 0 && (state.lastCmdResults[idx - 1] || {}).id === tabId) b.classList.add('active');
+      else b.classList.remove('active');
+    });
+  }
+  renderCmdScreenContent();
+}
+window.switchCmdTab = switchCmdTab;
+
+function renderCmdScreenContent() {
+  const screen = document.getElementById('cmd-terminal-content');
+  if (!screen) return;
+
+  const results = state.lastCmdResults || [];
+  if (results.length === 0) {
+    screen.innerHTML = '<div class="cmd-empty-hint">暂无命令输出</div>';
+    return;
+  }
+
+  if (state.activeCmdTab === 'all') {
+    let html = `
+      <div class="cmd-run-info-banner">
+        <span>执行命令: <code>${escapeHtml(state.lastExecutedCmd)}</code></span>
+        <span>共并发执行 <strong>${results.length}</strong> 台服务器</span>
+      </div>
+    `;
+
+    results.forEach(r => {
+      const exitBadge = r.success 
+        ? `<span class="cmd-exit-badge success">退出码 0 [OK]</span>` 
+        : `<span class="cmd-exit-badge error">退出码 ${r.code} [ERR]</span>`;
+      
+      const content = r.output ? escapeHtml(r.output) : (r.error ? escapeHtml(r.error) : '<span class="text-dim">(命令执行完毕，无标准控制台输出)</span>');
+      
+      html += `
+        <div class="cmd-server-block ${r.success ? 'server-ok' : 'server-fail'}">
+          <div class="cmd-server-header">
+            <div class="cmd-server-title">
+              <span class="cmd-status-indicator ${r.success ? 'online' : 'error'}"></span>
+              <strong>${escapeHtml(r.name || r.host)}</strong>
+              <span class="text-dim">(${escapeHtml(r.host)}:${r.port})</span>
+            </div>
+            <div class="cmd-server-meta">
+              <span class="cmd-duration">耗时: ${r.duration_ms}ms</span>
+              ${exitBadge}
+            </div>
+          </div>
+          <pre class="cmd-server-output"><code>${content}</code></pre>
+        </div>
+      `;
+    });
+    screen.innerHTML = html;
+  } else {
+    const r = results.find(x => x.id === state.activeCmdTab);
+    if (!r) {
+      screen.innerHTML = '<div class="cmd-empty-hint">未找到该服务器输出</div>';
+      return;
+    }
+    const exitBadge = r.success 
+      ? `<span class="cmd-exit-badge success">退出码 0 [OK]</span>` 
+      : `<span class="cmd-exit-badge error">退出码 ${r.code} [ERR]</span>`;
+    const content = r.output ? escapeHtml(r.output) : (r.error ? escapeHtml(r.error) : '<span class="text-dim">(无标准输出)</span>');
+
+    screen.innerHTML = `
+      <div class="cmd-run-info-banner" style="margin-bottom:12px;">
+        <span>命令: <code>${escapeHtml(state.lastExecutedCmd)}</code></span>
+        <span>服务器: <strong>${escapeHtml(r.name || r.host)}</strong> (${escapeHtml(r.host)}:${r.port})</span>
+      </div>
+      <div class="cmd-server-block ${r.success ? 'server-ok' : 'server-fail'}" style="margin:0; border:none; background:transparent;">
+        <div class="cmd-server-header" style="padding-top:0;">
+          <div class="cmd-server-title">
+            <span class="cmd-status-indicator ${r.success ? 'online' : 'error'}"></span>
+            <strong>${escapeHtml(r.name || r.host)}</strong>
+            <span class="text-dim">(${escapeHtml(r.host)}:${r.port})</span>
+          </div>
+          <div class="cmd-server-meta">
+            <span class="cmd-duration">耗时: ${r.duration_ms}ms</span>
+            ${exitBadge}
+          </div>
+        </div>
+        <pre class="cmd-server-output"><code>${content}</code></pre>
+      </div>
+    `;
+  }
+}
+
+function copyCmdExecOutput() {
+  const screen = document.getElementById('cmd-terminal-content');
+  if (!screen) return;
+  const text = screen.innerText || screen.textContent || '';
+  if (!text.trim()) {
+    showToast('输出窗口为空，无法复制', 'warning');
+    return;
+  }
+  copyToClipboard(text, '已复制当前命令执行结果至剪贴板');
+}
+window.copyCmdExecOutput = copyCmdExecOutput;
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -697,6 +1134,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const lines = document.getElementById('terminal-lines').innerText;
     copyToClipboard(lines);
   });
+
+  // Server cards dragover container listener
+  const gridEl = document.getElementById('server-grid');
+  if (gridEl) {
+    gridEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!draggedCard) return;
+      e.dataTransfer.dropEffect = 'move';
+      const targetCard = e.target.closest('.server-card');
+      if (targetCard && targetCard !== draggedCard) {
+        const rect = targetCard.getBoundingClientRect();
+        const midpoint = rect.left + rect.width / 2;
+        if (e.clientX > midpoint) {
+          targetCard.after(draggedCard);
+        } else {
+          targetCard.before(draggedCard);
+        }
+      }
+    });
+  }
 });
 
 // ------------------------------------------------------------------------------
