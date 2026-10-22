@@ -1845,8 +1845,24 @@ async function triggerBatchOp(action, targetIds = null) {
       confirm: `确定要向 ${scopeText} 发送指令，批量重启 Sing-box 核心进程吗？` 
     },
     update_core: { 
-      title: '批量升级 Sing-box 核心', 
-      confirm: `确定要在 ${scopeText} 上并发执行官方核心升级任务吗？` 
+      title: '批量升级 Sing-box 核心 (支持AWG)', 
+      confirm: `确定要在 ${scopeText} 上并发升级 Sing-box 核心（自动适配最新支持 AmneziaWG 混淆特性核心）吗？` 
+    },
+    update_cloudflared: { 
+      title: '批量升级 Cloudflare 隧道 (cloudflared)', 
+      confirm: `确定要在 ${scopeText} 上并发升级 Cloudflare 隧道核心 (cloudflared) 至最新官方稳定版吗？` 
+    },
+    update_xray: { 
+      title: '批量升级 Xray-core (xHTTP伴侣)', 
+      confirm: `确定要在 ${scopeText} 上并发升级 Xray-core 核心（Direct xHTTP 伴侣）至最新版本吗？` 
+    },
+    push_nodes: { 
+      title: '批量推送节点至订阅管理平台', 
+      confirm: `确定要让 ${scopeText} 重新将本机所有可用节点（含 Reality/Hysteria2/TUIC/xHTTP/AWG/Argo 等）同步推送到订阅管理平台吗？` 
+    },
+    update_script: { 
+      title: '批量更新 sb 本地运维脚本', 
+      confirm: `确定要在 ${scopeText} 上更新 /usr/local/bin/sb 脚本至 GitHub 最新主干版本吗？` 
     },
     reapply_bbr: { 
       title: '批量刷新激活 BBR+fq', 
@@ -1854,7 +1870,7 @@ async function triggerBatchOp(action, targetIds = null) {
     },
     uninstall: { 
       title: '彻底卸载节点脚本与全部服务', 
-      confirm: `⚠️ 高危操作警告：确定要在 ${scopeText} 上【彻底停止并卸载 Sing-box、Argo 隧道、域名证书、端口规则与所有节点配置】吗？该操作不可逆！` 
+      confirm: `⚠️ 高危操作警告：确定要在 ${scopeText} 上【彻底停止并卸载 Sing-box、Xray、Argo 隧道、域名证书、端口规则与所有节点配置】吗？该操作不可逆！` 
     }
   };
 
@@ -2106,7 +2122,7 @@ function openTerminal(taskId, title = '任务控制台') {
   openModal('modal-terminal');
 
   // Sync recent tasks list in selector
-  fetch('/api/tasks/recent').then(r => r.json()).then(d => {
+  fetch('/api/tasks/recent?limit=200').then(r => r.json()).then(d => {
     if (d.success && d.tasks) {
       updateTerminalTaskSelect(d.tasks, taskId);
     }
@@ -2125,7 +2141,7 @@ async function openTerminalModalDirect() {
   }
 
   try {
-    const res = await fetch('/api/tasks/recent');
+    const res = await fetch('/api/tasks/recent?limit=200');
     const data = await res.json();
     if (data.success && data.tasks && data.tasks.length > 0) {
       updateTerminalTaskSelect(data.tasks, data.latest_id);

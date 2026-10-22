@@ -422,6 +422,12 @@ def create_task(task_type, server_id, server_name=""):
         "error": None
     }
     with tasks_lock:
+        if len(tasks) > 500:
+            finished = [k for k, v in tasks.items() if v.get("status") in ("success", "error")]
+            if len(finished) > 100:
+                sorted_old = sorted(finished, key=lambda k: tasks[k].get("created_at", ""))
+                for old_k in sorted_old[:50]:
+                    tasks.pop(old_k, None)
         tasks[task_id] = task
     return task_id
 
@@ -1376,9 +1382,15 @@ def get_task_status(task_id):
 @app.route('/api/tasks/recent', methods=['GET'])
 def get_recent_tasks():
     with tasks_lock:
+        limit_arg = request.args.get('limit', '200')
+        try:
+            limit = int(limit_arg)
+        except Exception:
+            limit = 200
         sorted_tasks = sorted(tasks.values(), key=lambda t: t.get('created_at', ''), reverse=True)
         recent = []
-        for t in sorted_tasks[:15]:
+        target_tasks = sorted_tasks[:limit] if limit > 0 else sorted_tasks
+        for t in target_tasks:
             recent.append({
                 "id": t["id"],
                 "type": t.get("type"),
@@ -1953,7 +1965,11 @@ def batch_ops():
     s_single_name = targets[0].get("name", targets[0].get("host")) if single_mode else ""
     action_names = {
         "restart": f"重启服务: [{s_single_name}]" if single_mode else f"批量重启服务 ({len(targets)}台)",
-        "update_core": f"更新核心: [{s_single_name}]" if single_mode else f"批量更新核心 ({len(targets)}台)",
+        "update_core": f"更新Sing-box核心(含AWG): [{s_single_name}]" if single_mode else f"批量更新Sing-box核心(含AWG) ({len(targets)}台)",
+        "update_cloudflared": f"更新CF隧道核心: [{s_single_name}]" if single_mode else f"批量更新CF隧道核心 ({len(targets)}台)",
+        "update_xray": f"更新Xray核心: [{s_single_name}]" if single_mode else f"批量更新Xray核心 ({len(targets)}台)",
+        "push_nodes": f"推送节点至订阅管理平台: [{s_single_name}]" if single_mode else f"批量推送节点至订阅管理平台 ({len(targets)}台)",
+        "update_script": f"更新sb本地管理脚本: [{s_single_name}]" if single_mode else f"批量更新sb本地管理脚本 ({len(targets)}台)",
         "reapply_bbr": f"刷新激活BBR: [{s_single_name}]" if single_mode else f"批量刷新BBR ({len(targets)}台)",
         "uninstall": f"彻底卸载清理: [{s_single_name}]" if single_mode else f"批量彻底卸载清理 ({len(targets)}台)"
     }
@@ -1986,27 +2002,144 @@ def batch_ops():
                         success_count += 1
                     elif action == "update_core":
                         cmd = r'''
-LATEST="$(curl -s4m6 https://api.github.com/repos/SagerNet/sing-box/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's/^v//' || echo "")"
 ARCH="$(uname -m)"
-case "$ARCH" in x86_64) A="amd64" ;; aarch64|arm64) A="arm64" ;; *) A="" ;; esac
-if [ -n "$LATEST" ] && [ -n "$A" ]; then
-  wget -qO /tmp/sb.tar.gz "https://github.com/SagerNet/sing-box/releases/download/v${LATEST}/sing-box-${LATEST}-linux-${A}.tar.gz" || true
-  if [ -s /tmp/sb.tar.gz ]; then
-    tar -xzf /tmp/sb.tar.gz -C /tmp/
-    cp -f /tmp/sing-box-${LATEST}-linux-${A}/sing-box /usr/local/bin/sing-box
+case "$ARCH" in x86_64) A="amd64" ;; aarch64|arm64) A="arm64" ;; armv7*) A="armv7" ;; 386|i686) A="386" ;; *) A="amd64" ;; esac
+LX_TAG="$(curl -s4m6 https://api.github.com/repos/Leadaxe/sing-box-lx/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")"
+[ -z "$LX_TAG" ] && LX_TAG="v1.14.3-lx.22"
+
+TMP_DIR="$(mktemp -d /tmp/sb_lx_XXXXXX 2>/dev/null || mktemp -d)"
+LX_FILE="sing-box-${LX_TAG#v}-linux-${A}.tar.gz"
+LX_URL="https://github.com/Leadaxe/sing-box-lx/releases/download/${LX_TAG}/${LX_FILE}"
+
+curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+wget -q -T 30 -O "$TMP_DIR/sb.tar.gz" "$LX_URL" || true
+
+if [ -s "$TMP_DIR/sb.tar.gz" ]; then
+  tar -xzf "$TMP_DIR/sb.tar.gz" -C "$TMP_DIR"
+  SB_BIN="$(find "$TMP_DIR" -type f -name "sing-box" | head -n1)"
+  if [ -n "$SB_BIN" ] && ([ -x "$SB_BIN" ] || chmod +x "$SB_BIN" 2>/dev/null); then
+    cp -f "$SB_BIN" /usr/local/bin/sing-box
     chmod +x /usr/local/bin/sing-box
-    rm -rf /tmp/sb.tar.gz /tmp/sing-box-${LATEST}-linux-${A}
+    command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service,cap_net_admin=+ep' /usr/local/bin/sing-box 2>/dev/null || true
     systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null || true
-    echo "SUCCESS: v${LATEST}"
+    VER="$(/usr/local/bin/sing-box version 2>/dev/null | head -n1)"
+    echo "SUCCESS: $VER (支持AWG混淆特性)"
   else
-    echo "FAIL: 下载核心失败"
+    echo "FAIL: 解压未找到 sing-box 二进制文件"
   fi
+  rm -rf "$TMP_DIR"
 else
-  echo "FAIL: 无法获取最新版本号或未知架构"
+  rm -rf "$TMP_DIR"
+  echo "FAIL: 下载 Sing-box-lx ($LX_TAG) 核心失败"
 fi
 '''
-                        _, out = runner.run_cmd(cmd, timeout=60)
-                        append_task_log(task_id, f"[{name}] 核心更新: {out.strip()[:80]}")
+                        _, out = runner.run_cmd(cmd, timeout=90)
+                        append_task_log(task_id, f"[{name}] Sing-box核心(含AWG): {out.strip()[:100]}")
+                        success_count += 1
+                    elif action == "update_cloudflared":
+                        cmd = r'''
+ARCH="$(uname -m)"
+case "$ARCH" in x86_64) A="amd64" ;; aarch64|arm64) A="arm64" ;; armv7*) A="arm" ;; 386|i686) A="386" ;; *) A="amd64" ;; esac
+CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${A}"
+TMP_CF="/tmp/cf_${A}_$(date +%s)"
+
+curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$CF_URL" -o "$TMP_CF" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$CF_URL" -o "$TMP_CF" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "$CF_URL" -o "$TMP_CF" 2>/dev/null || \
+wget -q -T 30 -O "$TMP_CF" "$CF_URL" || true
+
+if [ -s "$TMP_CF" ]; then
+  chmod +x "$TMP_CF"
+  if "$TMP_CF" --version >/dev/null 2>&1; then
+    mv -f "$TMP_CF" /usr/local/bin/cloudflared
+    chmod +x /usr/local/bin/cloudflared
+    systemctl restart cloudflared 2>/dev/null || rc-service cloudflared restart 2>/dev/null || true
+    VER="$(/usr/local/bin/cloudflared --version 2>/dev/null | head -n1)"
+    echo "SUCCESS: $VER"
+  else
+    rm -f "$TMP_CF"
+    echo "FAIL: cloudflared 二进制校验失败"
+  fi
+else
+  rm -f "$TMP_CF"
+  echo "FAIL: 下载 cloudflared 失败"
+fi
+'''
+                        _, out = runner.run_cmd(cmd, timeout=90)
+                        append_task_log(task_id, f"[{name}] Cloudflare隧道核心: {out.strip()[:100]}")
+                        success_count += 1
+                    elif action == "update_xray":
+                        cmd = r'''
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64) XARCH="64" ;;
+  aarch64|arm64) XARCH="arm64-v8a" ;;
+  armv7*) XARCH="arm32-v7a" ;;
+  386|i686) XARCH="32" ;;
+  *) XARCH="64" ;;
+esac
+TMP_DIR="$(mktemp -d /tmp/xray_XXXXXX 2>/dev/null || mktemp -d)"
+XTAG="$(curl -s4m6 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")"
+[ -z "$XTAG" ] && XTAG="v25.1.30"
+XURL="https://github.com/XTLS/Xray-core/releases/download/${XTAG}/Xray-linux-${XARCH}.zip"
+
+curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
+wget -q -T 30 -O "$TMP_DIR/xray.zip" "$XURL" || true
+
+if [ -s "$TMP_DIR/xray.zip" ]; then
+  unzip -q -o "$TMP_DIR/xray.zip" -d "$TMP_DIR" 2>/dev/null || busybox unzip -q -o "$TMP_DIR/xray.zip" -d "$TMP_DIR" 2>/dev/null || true
+  if [ -f "$TMP_DIR/xray" ]; then
+    chmod +x "$TMP_DIR/xray"
+    cp -f "$TMP_DIR/xray" /usr/local/bin/xray-argo
+    chmod +x /usr/local/bin/xray-argo
+    systemctl restart xray-argo 2>/dev/null || rc-service xray-argo restart 2>/dev/null || true
+    VER="$(/usr/local/bin/xray-argo version 2>/dev/null | head -n1)"
+    echo "SUCCESS: $VER"
+  else
+    echo "FAIL: 解压后未找到 xray 可执行文件"
+  fi
+  rm -rf "$TMP_DIR"
+else
+  rm -rf "$TMP_DIR"
+  echo "FAIL: 下载 Xray-core 失败"
+fi
+'''
+                        _, out = runner.run_cmd(cmd, timeout=90)
+                        append_task_log(task_id, f"[{name}] Xray核心更新: {out.strip()[:100]}")
+                        success_count += 1
+                    elif action == "push_nodes":
+                        cmd = r'''
+if [ -x /usr/local/bin/sb ]; then
+  /usr/local/bin/sb push 2>&1
+elif [ -f /usr/local/bin/sb ]; then
+  bash /usr/local/bin/sb push 2>&1
+else
+  echo "FAIL: 未找到 /usr/local/bin/sb 管理脚本"
+fi
+'''
+                        _, out = runner.run_cmd(cmd, timeout=40)
+                        append_task_log(task_id, f"[{name}] 同步节点: {out.strip()[:120]}")
+                        success_count += 1
+                    elif action == "update_script":
+                        cmd = r'''
+URL="https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh"
+curl -fsSL --connect-timeout 8 -m 30 "https://ghproxy.net/$URL" -o /usr/local/bin/sb 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 30 "https://hub.gitmirror.com/$URL" -o /usr/local/bin/sb 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 30 "$URL" -o /usr/local/bin/sb 2>/dev/null || \
+wget -q -T 20 -O /usr/local/bin/sb "$URL" || true
+if [ -s /usr/local/bin/sb ] && grep -q "Sing-box" /usr/local/bin/sb 2>/dev/null; then
+  chmod +x /usr/local/bin/sb
+  echo "SUCCESS: /usr/local/bin/sb 脚本已更新至 GitHub 最新版"
+else
+  echo "FAIL: 获取最新安装脚本失败"
+fi
+'''
+                        _, out = runner.run_cmd(cmd, timeout=30)
+                        append_task_log(task_id, f"[{name}] 运维脚本更新: {out.strip()[:100]}")
                         success_count += 1
                     elif action == "reapply_bbr":
                         cmd = r'''
@@ -2038,19 +2171,26 @@ if command -v cloudflared >/dev/null 2>&1; then
   cloudflared service uninstall >/dev/null 2>&1 || true
 fi
 
+systemctl stop xray-argo 2>/dev/null || true
+systemctl disable xray-argo 2>/dev/null || true
+rc-service xray-argo stop 2>/dev/null || true
+rc-update del xray-argo default 2>/dev/null || true
+
 systemctl stop sb-hop.service 2>/dev/null || true
 systemctl disable sb-hop.service 2>/dev/null || true
 
 pkill -9 -f sing-box 2>/dev/null || true
 pkill -9 -f cloudflared 2>/dev/null || true
+pkill -9 -f xray-argo 2>/dev/null || true
 
 # 2. 清理系统服务单元文件
 rm -f /etc/systemd/system/sing-box.service* 2>/dev/null || true
 rm -rf /etc/systemd/system/sing-box.service.d 2>/dev/null || true
 rm -f /etc/systemd/system/cloudflared.service* 2>/dev/null || true
 rm -rf /etc/systemd/system/cloudflared.service.d 2>/dev/null || true
+rm -f /etc/systemd/system/xray-argo.service* 2>/dev/null || true
 rm -f /etc/systemd/system/sb-hop.service* 2>/dev/null || true
-rm -f /etc/init.d/sing-box /etc/init.d/cloudflared 2>/dev/null || true
+rm -f /etc/init.d/sing-box /etc/init.d/cloudflared /etc/init.d/xray-argo 2>/dev/null || true
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload 2>/dev/null || true
@@ -2062,16 +2202,17 @@ rm -f /usr/local/bin/sing-box /usr/bin/sing-box 2>/dev/null || true
 rm -f /usr/local/bin/sb /usr/bin/sb 2>/dev/null || true
 rm -f /usr/local/bin/sb-hop.sh /usr/local/bin/sb-selfcheck.sh 2>/dev/null || true
 rm -f /usr/local/bin/cloudflared /usr/bin/cloudflared 2>/dev/null || true
+rm -f /usr/local/bin/xray-argo /usr/local/bin/xray 2>/dev/null || true
 
 # 4. 删除配置文件、状态文件、证书、日志与临时缓存
 rm -rf /etc/sing-box 2>/dev/null || true
 rm -rf /etc/cloudflared 2>/dev/null || true
 rm -rf /var/log/sing-box* 2>/dev/null || true
-rm -rf /tmp/sb* /tmp/sing-box* /tmp/cloudflared* 2>/dev/null || true
+rm -rf /tmp/sb* /tmp/sing-box* /tmp/cloudflared* /tmp/xray* 2>/dev/null || true
 
 # 5. 清理 Crontab 计划任务残留
 if command -v crontab >/dev/null 2>&1; then
-  crontab -l 2>/dev/null | grep -v 'sing-box' | grep -v 'sb-' | grep -v 'cloudflared' | crontab - 2>/dev/null || true
+  crontab -l 2>/dev/null | grep -v 'sing-box' | grep -v 'sb-' | grep -v 'cloudflared' | grep -v 'xray-argo' | crontab - 2>/dev/null || true
 fi
 
 # 6. 清理 iptables / ip6tables 端口跳跃规则与链

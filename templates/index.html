@@ -64,7 +64,11 @@
           </button>
           <div id="batch-ops-menu" class="dropdown-menu">
             <button class="dropdown-item" onclick="triggerBatchOp('restart')">🔄 批量重启 Sing-box 服务</button>
-            <button class="dropdown-item" onclick="triggerBatchOp('update_core')">⬆️ 批量升级 Sing-box 核心</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('update_core')">⬆️ 批量升级 Sing-box 核心 (支持AWG)</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('update_cloudflared')">☁️ 批量升级 Cloudflare 隧道 (cloudflared)</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('update_xray')">📡 批量升级 Xray-core (xHTTP伴侣)</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('push_nodes')">🚀 批量推送节点至订阅管理平台</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('update_script')">📝 批量更新 sb 本地运维脚本</button>
             <button class="dropdown-item" onclick="triggerBatchOp('reapply_bbr')">⚡ 批量刷新激活 BBR+fq</button>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item text-rose" onclick="triggerBatchOp('uninstall')">🗑️ 批量彻底卸载清理</button>
@@ -169,7 +173,9 @@
           <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">🩺 巡检</button>
           <button class="btn btn-sm btn-secondary" onclick="openCommandModalForSelected()" title="向已选 VPS 批量发送 Shell 命令">💻 批量命令</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选 Sing-box">🔄 重启</button>
-          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级核心">⬆️ 升核心</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心(支持AWG)">⬆️ 升Singbox</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_cloudflared', getSelectedIds())" title="升级 Cloudflare 隧道(cloudflared)">☁️ 升CF隧道</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('push_nodes', getSelectedIds())" title="重新推送节点至管理平台">🚀 推节点</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新 BBR">⚡ BBR</button>
           <button class="btn btn-sm btn-danger-outline" onclick="triggerBatchOp('uninstall', getSelectedIds())" title="彻底卸载已选节点的所有组件与服务">🗑️ 彻底卸载</button>
           <button class="btn btn-sm btn-danger-ghost" onclick="batchDeleteSelected()" title="从面板管理列表中批量移除">❌ 移出面板</button>
@@ -660,7 +666,7 @@
           </div>
         </div>
         <div class="terminal-header-actions">
-          <select id="terminal-task-select" class="form-input form-input-sm" style="display:none; max-width:210px; font-size:12px; height:28px; padding:2px 8px;" onchange="switchTerminalTask(this.value)" title="切换查看近期任务控制台"></select>
+          <select id="terminal-task-select" class="form-input form-input-sm" style="display:none; max-width:280px; min-width:180px; font-size:12px; height:28px; padding:2px 8px;" onchange="switchTerminalTask(this.value)" title="切换查看全部任务进度与实时控制台"></select>
           <label class="checkbox-label-sm">
             <input type="checkbox" id="chk-autoscroll" checked>
             <span>自动滚屏</span>
@@ -803,8 +809,14 @@
         <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选主机 Sing-box 核心">
           🔄 重启
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心">
-          ⬆️ 升核心
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心 (支持AWG)">
+          ⬆️ 升Singbox
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_cloudflared', getSelectedIds())" title="升级 Cloudflare 隧道 (cloudflared)">
+          ☁️ 升CF隧道
+        </button>
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('push_nodes', getSelectedIds())" title="重新推送节点至管理平台">
+          🚀 推节点
         </button>
         <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新激活 BBR+fq">
           ⚡ 刷新 BBR
