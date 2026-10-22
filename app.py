@@ -1348,6 +1348,14 @@ def logout_route():
     resp.delete_cookie('auth_session')
     return resp
 
+@app.after_request
+def add_no_cache_headers(response):
+    if request.path == '/' or request.path.endswith('.html') or request.path.startswith('/api/'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
 # ------------------------------------------------------------------------------
 # Routes: Web UI
 # ------------------------------------------------------------------------------
