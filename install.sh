@@ -259,6 +259,27 @@ case "${1:-}" in
     systemctl restart "$APP_NAME"
     echo "🎉 项目已升级至最新版本并重启成功！所有 VPS 节点与配置完好无损。"
     ;;
+  passwd)
+    echo "=========================================================="
+    echo "  VPS Cluster Manager - 管理员密码维护"
+    echo "=========================================================="
+    CONFIG_JSON="$INSTALL_DIR/data/config.json"
+    if [[ ! -f "$CONFIG_JSON" ]]; then
+      CONFIG_JSON="/etc/vps-cluster-manager/config.json"
+    fi
+    if [[ ! -f "$CONFIG_JSON" ]]; then
+      echo "错误: 未找到配置文件！"
+      exit 1
+    fi
+    CUR_PASS="$(python3 -c "import json; print(json.load(open('$CONFIG_JSON')).get('global',{}).get('admin_password',''))" 2>/dev/null || true)"
+    echo -e "当前管理密码: \033[32m${CUR_PASS:-[尚未设定/首次初始化模式]}\033[0m"
+    read -rp "请输入新的管理员密码 (直接回车保持不变): " NEW_PASS
+    if [[ -n "$NEW_PASS" ]]; then
+      python3 -c "import json; f=open('$CONFIG_JSON','r'); d=json.load(f); f.close(); d.setdefault('global',{})['admin_password']='$NEW_PASS'; f=open('$CONFIG_JSON','w'); json.dump(d,f,indent=2,ensure_ascii=False); f.close()" 2>/dev/null
+      echo -e "\033[32m[ OK ] 管理员密码已成功重设为: $NEW_PASS\033[0m"
+      systemctl restart "$APP_NAME" 2>/dev/null || true
+    fi
+    ;;
   uninstall)
     systemctl stop "$APP_NAME" 2>/dev/null || true
     systemctl disable "$APP_NAME" 2>/dev/null || true
@@ -278,6 +299,7 @@ case "${1:-}" in
     echo "  ${APP_NAME} status     - 查看运行状态"
     echo "  ${APP_NAME} logs       - 实时查看运行日志"
     echo "  ${APP_NAME} update     - 一键拉取最新代码并重启"
+    echo "  ${APP_NAME} passwd     - 查看或重置管理员登录密码"
     echo "  ${APP_NAME} uninstall  - 彻底卸载并删除所有文件"
     echo "=========================================================="
     ;;

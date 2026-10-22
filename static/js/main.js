@@ -1179,6 +1179,13 @@ function openGlobalConfigModal() {
   document.getElementById('cfg-auto-inspect').checked = g.auto_inspect === true;
   document.getElementById('cfg-auto-inspect-interval').value = g.auto_inspect_interval || 60;
 
+  const adminPwdInput = document.getElementById('cfg-admin-password');
+  if (adminPwdInput) adminPwdInput.value = '';
+  const loginPathInput = document.getElementById('cfg-login-path');
+  if (loginPathInput) loginPathInput.value = g.login_path || 'login';
+  const stealthInput = document.getElementById('cfg-stealth-mode');
+  if (stealthInput) stealthInput.checked = !!g.stealth_mode;
+
   openModal('modal-global-config');
 }
 
@@ -1208,7 +1215,10 @@ async function saveGlobalConfig() {
     install_script_url: document.getElementById('cfg-script-url').value.trim(),
     concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5,
     auto_inspect: document.getElementById('cfg-auto-inspect').checked,
-    auto_inspect_interval: parseInt(document.getElementById('cfg-auto-inspect-interval').value) || 60
+    auto_inspect_interval: parseInt(document.getElementById('cfg-auto-inspect-interval').value) || 60,
+    admin_password: document.getElementById('cfg-admin-password') ? document.getElementById('cfg-admin-password').value.trim() : '',
+    login_path: document.getElementById('cfg-login-path') ? document.getElementById('cfg-login-path').value.trim() : 'login',
+    stealth_mode: document.getElementById('cfg-stealth-mode') ? document.getElementById('cfg-stealth-mode').checked : false
   };
 
   try {
@@ -1220,7 +1230,7 @@ async function saveGlobalConfig() {
     });
     const data = await res.json();
     if (data.success) {
-      showToast('全局统一策略配置已成功保存！', 'success');
+      showToast('全局统一策略与安全防护配置已成功保存！', 'success');
       state.config.global = data.data;
       closeModal('modal-global-config');
     } else {
@@ -2246,3 +2256,91 @@ async function pollTaskLogs() {
     console.error('Task poll error:', err);
   }
 }
+
+// ------------------------------------------------------------------------------
+// Security: Change Admin Password Modal & 401 Interception
+// ------------------------------------------------------------------------------
+function openChangePasswordModal() {
+  const form = document.getElementById('form-change-password');
+  if (form) form.reset();
+  openModal('modal-change-password');
+  setTimeout(() => {
+    const el = document.getElementById('pwd-old');
+    if (el) el.focus();
+  }, 100);
+}
+window.openChangePasswordModal = openChangePasswordModal;
+
+async function submitChangePassword(e) {
+  if (e) e.preventDefault();
+  const oldPwd = document.getElementById('pwd-old').value.trim();
+  const newPwd = document.getElementById('pwd-new').value.trim();
+  const confirmPwd = document.getElementById('pwd-confirm').value.trim();
+
+  if (!oldPwd) {
+    showToast('请输入当前原密码', 'warning');
+    return;
+  }
+  if (!newPwd || newPwd.length < 5) {
+    showToast('新密码长度不能少于 5 位字符', 'warning');
+    return;
+  }
+  if (newPwd !== confirmPwd) {
+    showToast('两次输入的新密码不一致，请核对', 'warning');
+    return;
+  }
+
+  const btn = document.getElementById('btn-submit-change-pwd');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '正在保存修改...';
+  }
+
+  try {
+    const res = await fetch('/api/auth/change_password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldPwd, new_password: newPwd })
+    });
+    const data = await res.json();
+    if (data.success) {
+      showToast('管理员密码修改成功！安全 Session 已同步更新', 'success');
+      closeModal('modal-change-password');
+      if (document.getElementById('form-change-password')) {
+        document.getElementById('form-change-password').reset();
+      }
+    } else {
+      showToast(`密码修改失败: ${data.message}`, 'error');
+    }
+  } catch (err) {
+    showToast(`网络请求异常: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '确认保存修改';
+    }
+  }
+}
+window.submitChangePassword = submitChangePassword;
+
+// Global 401 Interceptor: Redirect to login if unauthenticated
+(function() {
+  const origFetch = window.fetch;
+  window.fetch = async function(...args) {
+    const res = await origFetch.apply(this, args);
+    if (res && res.status === 401) {
+      try {
+        const cloned = res.clone();
+        const data = await cloned.json();
+        if (data && data.need_login) {
+          showToast('登录凭据已失效或未授权，即将跳转到登录页...', 'warning');
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 600);
+        }
+      } catch (e) {}
+    }
+    return res;
+  };
+})();
+

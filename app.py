@@ -7,8 +7,10 @@ import re
 import socket
 import threading
 import subprocess
+import hmac
+import hashlib
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, send_file, Response
+from flask import Flask, request, jsonify, render_template, send_file, Response, make_response, redirect
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
@@ -41,6 +43,9 @@ ETC_ROLL_DIR = "/etc/vps-cluster-manager/backups"
 
 DEFAULT_CONFIG = {
     "global": {
+        "admin_password": "",
+        "login_path": "login",
+        "stealth_mode": False,
         "push_url": "http://23.254.150.14:5000",
         "push_token": "",
         "auto_push": True,
@@ -1024,6 +1029,275 @@ fi
         runner.close()
 
 # ------------------------------------------------------------------------------
+# Security Infrastructure: Authentication, Sessions & Anti-Scanning Rate Limiting
+# ------------------------------------------------------------------------------
+def get_secret_key():
+    key_paths = [
+        os.path.join(ETC_BACKUP_DIR, '.secret_key'),
+        os.path.join(DATA_DIR, '.secret_key')
+    ]
+    for p in key_paths:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    k = f.read().strip()
+                    if k:
+                        return k
+            except Exception:
+                pass
+    k = uuid.uuid4().hex + uuid.uuid4().hex
+    for p in key_paths:
+        try:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, 'w', encoding='utf-8') as f:
+                f.write(k)
+            break
+        except Exception:
+            pass
+    return k
+
+SECRET_KEY = get_secret_key()
+
+FAILED_ATTEMPTS = {}
+FAILED_LOCKS = {}
+RATE_LIMIT_LOCK = threading.Lock()
+
+def get_client_ip():
+    return request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+
+def check_ip_rate_limit(ip):
+    now = time.time()
+    with RATE_LIMIT_LOCK:
+        if ip in FAILED_LOCKS:
+            if now < FAILED_LOCKS[ip]:
+                remaining = int(FAILED_LOCKS[ip] - now)
+                return False, f"登录失败过多，安全网关已临时阻断该 IP，请 {remaining} 秒后再试"
+            else:
+                del FAILED_LOCKS[ip]
+                FAILED_ATTEMPTS.pop(ip, None)
+    return True, ""
+
+def record_failed_attempt(ip):
+    now = time.time()
+    with RATE_LIMIT_LOCK:
+        attempts = [t for t in FAILED_ATTEMPTS.get(ip, []) if now - t < 60]
+        attempts.append(now)
+        FAILED_ATTEMPTS[ip] = attempts
+        if len(attempts) >= 5:
+            FAILED_LOCKS[ip] = now + 60
+            return 60
+    return 0
+
+def record_successful_attempt(ip):
+    with RATE_LIMIT_LOCK:
+        FAILED_ATTEMPTS.pop(ip, None)
+        FAILED_LOCKS.pop(ip, None)
+
+def get_admin_password():
+    env_pwd = os.environ.get("ADMIN_PASSWORD", "").strip()
+    if env_pwd:
+        return env_pwd
+    cfg = load_config()
+    return (cfg.get("global", {}).get("admin_password") or "").strip()
+
+def is_auth_configured():
+    return bool(get_admin_password())
+
+def get_login_path():
+    cfg = load_config()
+    p = (cfg.get("global", {}).get("login_path") or "login").strip().lstrip('/')
+    return p if p else "login"
+
+def is_stealth_mode():
+    cfg = load_config()
+    return bool(cfg.get("global", {}).get("stealth_mode", False))
+
+def create_auth_token(password):
+    ts = str(int(time.time()))
+    pwd_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()[:16]
+    payload = f"{ts}:{pwd_hash}"
+    sig = hmac.new(SECRET_KEY.encode('utf-8'), payload.encode('utf-8'), hashlib.sha256).hexdigest()[:16]
+    return f"{payload}:{sig}"
+
+def verify_auth_token(token, password):
+    if not token or not password:
+        return False
+    parts = token.split(':')
+    if len(parts) != 3:
+        return False
+    ts, pwd_hash, sig = parts
+    try:
+        created_time = int(ts)
+    except ValueError:
+        return False
+    if time.time() - created_time > 86400 * 30:
+        return False
+    expected_payload = f"{ts}:{pwd_hash}"
+    expected_sig = hmac.new(SECRET_KEY.encode('utf-8'), expected_payload.encode('utf-8'), hashlib.sha256).hexdigest()[:16]
+    if not hmac.compare_digest(sig, expected_sig):
+        return False
+    current_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()[:16]
+    return hmac.compare_digest(pwd_hash, current_hash)
+
+def is_authenticated():
+    current_pwd = get_admin_password()
+    if not current_pwd:
+        return False
+
+    # 1. Cookie Session
+    cookie_token = request.cookies.get('auth_session')
+    if cookie_token and verify_auth_token(cookie_token, current_pwd):
+        return True
+
+    # 2. Authorization Header
+    auth_h = request.headers.get('Authorization', '').strip()
+    if auth_h:
+        token = auth_h[7:].strip() if auth_h.lower().startswith('bearer ') else auth_h
+        if token:
+            if hmac.compare_digest(token, current_pwd):
+                return True
+            if verify_auth_token(token, current_pwd):
+                return True
+
+    # 3. Custom Headers
+    api_key = request.headers.get('X-API-Key', '').strip() or request.headers.get('X-Token', '').strip()
+    if api_key and hmac.compare_digest(api_key, current_pwd):
+        return True
+
+    # 4. URL query: ?token=<token>
+    query_tok = request.args.get('token', '').strip()
+    if query_tok and hmac.compare_digest(query_tok, current_pwd):
+        return True
+
+    return False
+
+@app.before_request
+def require_authentication():
+    # Always allow static files & browser favicon
+    if request.path.startswith('/static') or request.path == '/favicon.ico':
+        return None
+
+    cur_login_path = '/' + get_login_path()
+
+    # Dynamic check for configured login path
+    if request.path == cur_login_path:
+        if is_authenticated():
+            return redirect('/')
+        return render_template('login.html', is_configured=is_auth_configured(), login_path=get_login_path())
+
+    allowed_endpoints = ['/login', '/api/login', '/api/init_auth', '/logout']
+    if request.path in allowed_endpoints:
+        return None
+
+    if is_authenticated():
+        return None
+
+    # Block unauthenticated API access immediately
+    if request.path.startswith('/api/'):
+        return jsonify({
+            "success": False,
+            "message": "未授权访问，请先通过管理密码登录",
+            "need_login": True
+        }), 401
+
+    # In stealth mode, accessing root without auth returns 404 to deceive port scanners
+    if is_stealth_mode() and request.path == '/':
+        return "404 Not Found", 404
+
+    # Otherwise redirect to the login gateway
+    return redirect(f"{cur_login_path}?next={request.path}")
+
+@app.route('/login', methods=['GET'])
+def login_route():
+    cur_login_path = '/' + get_login_path()
+    if is_stealth_mode() and cur_login_path != '/login':
+        return "404 Not Found", 404
+    if is_authenticated():
+        return redirect('/')
+    return render_template('login.html', is_configured=is_auth_configured(), login_path=get_login_path())
+
+@app.route('/api/init_auth', methods=['POST'])
+def api_init_auth():
+    if is_auth_configured():
+        return jsonify({"success": False, "message": "管理员密码已设定，无法重复初始化"}), 403
+
+    data = request.get_json() or {}
+    password = (data.get("password") or "").strip()
+    if not password:
+        return jsonify({"success": False, "message": "密码不能为空"}), 400
+    if len(password) < 5:
+        return jsonify({"success": False, "message": "为保障安全，密码长度不能少于 5 个字符"}), 400
+
+    cfg = load_config()
+    cfg.setdefault("global", {})["admin_password"] = password
+    save_config(cfg)
+
+    record_successful_attempt(get_client_ip())
+    token = create_auth_token(password)
+    resp = make_response(jsonify({"success": True, "message": "管理员密码初始化成功"}))
+    resp.set_cookie('auth_session', token, max_age=86400 * 30, httponly=True, samesite='Lax')
+    return resp
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    ip = get_client_ip()
+    allowed, err_msg = check_ip_rate_limit(ip)
+    if not allowed:
+        return jsonify({"success": False, "message": err_msg}), 429
+
+    if not is_auth_configured():
+        return jsonify({"success": False, "message": "面板尚未初始化管理密码，请先完成安全初始化"}), 400
+
+    data = request.get_json() or {}
+    password = (data.get("password") or "").strip()
+    remember = bool(data.get("remember", True))
+    admin_pwd = get_admin_password()
+
+    if hmac.compare_digest(password, admin_pwd):
+        record_successful_attempt(ip)
+        token = create_auth_token(admin_pwd)
+        max_age = 86400 * 30 if remember else None
+        resp = make_response(jsonify({"success": True, "message": "登录成功"}))
+        resp.set_cookie('auth_session', token, max_age=max_age, httponly=True, samesite='Lax')
+        return resp
+    else:
+        lock_sec = record_failed_attempt(ip)
+        if lock_sec > 0:
+            return jsonify({"success": False, "message": f"密码错误！连续失败次数过多，安全网关已锁定该 IP {lock_sec} 秒"}), 429
+        return jsonify({"success": False, "message": "管理员密码错误，请重新输入"}), 400
+
+@app.route('/api/auth/change_password', methods=['POST'])
+def api_change_password():
+    if not is_authenticated():
+        return jsonify({"success": False, "message": "未登录"}), 401
+
+    data = request.get_json() or {}
+    old_pwd = (data.get("old_password") or "").strip()
+    new_pwd = (data.get("new_password") or "").strip()
+    admin_pwd = get_admin_password()
+
+    if not hmac.compare_digest(old_pwd, admin_pwd):
+        return jsonify({"success": False, "message": "当前原密码输入错误"}), 400
+    if not new_pwd or len(new_pwd) < 5:
+        return jsonify({"success": False, "message": "新密码长度不能少于 5 个字符"}), 400
+
+    cfg = load_config()
+    cfg.setdefault("global", {})["admin_password"] = new_pwd
+    save_config(cfg)
+
+    new_token = create_auth_token(new_pwd)
+    resp = make_response(jsonify({"success": True, "message": "管理密码修改成功"}))
+    resp.set_cookie('auth_session', new_token, max_age=86400 * 30, httponly=True, samesite='Lax')
+    return resp
+
+@app.route('/logout', methods=['GET'])
+def logout_route():
+    cur_login_path = '/' + get_login_path()
+    resp = make_response(redirect(cur_login_path))
+    resp.delete_cookie('auth_session')
+    return resp
+
+# ------------------------------------------------------------------------------
 # Routes: Web UI
 # ------------------------------------------------------------------------------
 @app.route('/')
@@ -1035,12 +1309,26 @@ def index():
 # ------------------------------------------------------------------------------
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    return jsonify(load_config())
+    cfg = load_config()
+    cfg_copy = json.loads(json.dumps(cfg))
+    cfg_copy.setdefault("global", {})["admin_password_set"] = bool(cfg.get("global", {}).get("admin_password"))
+    cfg_copy.setdefault("global", {})["admin_password"] = ""
+    return jsonify(cfg_copy)
 
 @app.route('/api/config/global', methods=['POST'])
 def update_global_config():
     payload = request.get_json() or {}
     cfg = load_config()
+    if "admin_password" in payload:
+        new_p = str(payload["admin_password"]).strip()
+        if new_p:
+            cfg["global"]["admin_password"] = new_p
+        payload.pop("admin_password", None)
+    if "login_path" in payload:
+        clean_lp = re.sub(r'[^a-zA-Z0-9_\-]', '', str(payload["login_path"])).strip().lstrip('/')
+        payload["login_path"] = clean_lp if clean_lp else "login"
+    if "stealth_mode" in payload:
+        payload["stealth_mode"] = bool(payload["stealth_mode"])
     cfg["global"].update(payload)
     save_config(cfg)
     return jsonify({"success": True, "data": cfg["global"]})

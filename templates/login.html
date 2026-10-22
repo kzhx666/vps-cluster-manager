@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>安全登录 - VPS Cluster Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-gradient: radial-gradient(circle at 50% 10%, #151e36 0%, #080c16 65%, #05070d 100%);
+      --card-bg: rgba(14, 20, 36, 0.82);
+      --card-border: rgba(56, 189, 248, 0.22);
+      --primary: #38bdf8;
+      --primary-hover: #0284c7;
+      --primary-glow: rgba(56, 189, 248, 0.4);
+      --success: #10b981;
+      --danger: #ef4444;
+      --danger-bg: rgba(239, 68, 68, 0.12);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+      --input-bg: rgba(8, 13, 26, 0.75);
+      --input-border: rgba(255, 255, 255, 0.12);
+      --input-focus: #38bdf8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      background: var(--bg-gradient);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      color: var(--text-main);
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Ambient Decorative Elements */
+    body::before {
+      content: "";
+      position: absolute;
+      top: -20%;
+      left: 30%;
+      width: 500px;
+      height: 500px;
+      background: radial-gradient(circle, rgba(56, 189, 248, 0.12) 0%, transparent 70%);
+      filter: blur(80px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    body::after {
+      content: "";
+      position: absolute;
+      bottom: -15%;
+      right: 25%;
+      width: 450px;
+      height: 450px;
+      background: radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, transparent 70%);
+      filter: blur(90px);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .login-container {
+      width: 100%;
+      max-width: 430px;
+      position: relative;
+      z-index: 10;
+      animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    .login-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border: 1px solid var(--card-border);
+      border-radius: 20px;
+      padding: 38px 32px 32px;
+      box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7),
+                  0 0 40px rgba(56, 189, 248, 0.12);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .login-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #38bdf8, #818cf8, #10b981);
+    }
+
+    .brand-header {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .logo-badge {
+      width: 64px;
+      height: 64px;
+      margin: 0 auto 16px;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 0 25px rgba(56, 189, 248, 0.25);
+      animation: pulseGlow 4s infinite ease-in-out;
+    }
+
+    .logo-badge svg {
+      width: 32px;
+      height: 32px;
+      color: var(--primary);
+    }
+
+    .brand-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+
+    .brand-subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    .security-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(16, 185, 129, 0.12);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 20px;
+      font-size: 0.76rem;
+      color: var(--success);
+      margin-top: 10px;
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      background: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    /* Init Notice Banner */
+    .init-banner {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.28);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 22px;
+      font-size: 0.82rem;
+      color: #bae6fd;
+      line-height: 1.45;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .init-banner svg {
+      flex-shrink: 0;
+      margin-top: 2px;
+      color: var(--primary);
+    }
+
+    /* Alert / Error Box */
+    .alert-box {
+      display: none;
+      background: var(--danger-bg);
+      border: 1px solid rgba(239, 68, 68, 0.35);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 0.82rem;
+      color: #fca5a5;
+      margin-bottom: 20px;
+      line-height: 1.4;
+      animation: shake 0.4s ease-in-out;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .form-input {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 12px;
+      padding: 12px 44px 12px 14px;
+      font-size: 0.95rem;
+      color: #ffffff;
+      outline: none;
+      transition: all 0.2s ease;
+      font-family: inherit;
+    }
+
+    .form-input:focus {
+      border-color: var(--input-focus);
+      background: rgba(12, 19, 38, 0.9);
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18);
+    }
+
+    .input-icon-btn {
+      position: absolute;
+      right: 12px;
+      background: transparent;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s ease;
+    }
+
+    .input-icon-btn:hover {
+      color: var(--text-main);
+    }
+
+    .form-extra {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      font-size: 0.82rem;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-label input {
+      accent-color: var(--primary);
+      width: 15px;
+      height: 15px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-submit {
+      width: 100%;
+      background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+      border: none;
+      border-radius: 12px;
+      padding: 13px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #04101e;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 6px 20px rgba(56, 189, 248, 0.35);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 25px rgba(56, 189, 248, 0.45);
+      filter: brightness(1.06);
+    }
+
+    .btn-submit:active {
+      transform: translateY(1px);
+      box-shadow: 0 3px 10px rgba(56, 189, 248, 0.25);
+    }
+
+    .btn-submit:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .card-footer {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      font-size: 0.74rem;
+      color: var(--text-dim);
+    }
+
+    .footer-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Animations */
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-15px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% {
+        box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+        border-color: rgba(56, 189, 248, 0.3);
+      }
+      50% {
+        box-shadow: 0 0 32px rgba(56, 189, 248, 0.4);
+        border-color: rgba(56, 189, 248, 0.5);
+      }
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-container">
+    <div class="login-card">
+      <div class="brand-header">
+        <div class="logo-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            <path d="M14 6h4"></path>
+            <path d="M14 18h4"></path>
+          </svg>
+        </div>
+        <h1 class="brand-title">VPS Cluster Manager</h1>
+        <p class="brand-subtitle">多节点集群中枢控制台</p>
+        <div class="security-status">
+          <span class="status-dot"></span>
+          安全防护网关已启用
+        </div>
+      </div>
+
+      {% if not is_configured %}
+      <!-- 首次初始化模式 -->
+      <div class="init-banner">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <div>
+          <strong>首次启动安全设置</strong><br>
+          系统尚未设定管理员密码，为防止公网自动化扫描器探测与嗅探，请设定您的初始管理密码。
+        </div>
+      </div>
+      {% endif %}
+
+      <div id="alert-box" class="alert-box"></div>
+
+      <form id="login-form" onsubmit="handleAuthSubmit(event)">
+        {% if not is_configured %}
+        <!-- 首次初始化输入项 -->
+        <div class="form-group">
+          <label class="form-label" for="init-password">设置管理员密码</label>
+          <div class="input-wrapper">
+            <input type="password" id="init-password" class="form-input" placeholder="请输入高强度管理员密码" required autocomplete="new-password">
+            <button type="button" class="input-icon-btn" onclick="togglePasswordVisibility('init-password', this)" title="显示/隐藏密码">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="init-confirm-password">再次确认密码</label>
+          <div class="input-wrapper">
+            <input type="password" id="init-confirm-password" class="form-input" placeholder="请再次输入相同密码" required autocomplete="new-password">
+            <button type="button" class="input-icon-btn" onclick="togglePasswordVisibility('init-confirm-password', this)" title="显示/隐藏密码">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="btn-submit" class="btn-submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          设定密码并登录
+        </button>
+
+        {% else %}
+        <!-- 正常登录输入项 -->
+        <div class="form-group">
+          <label class="form-label" for="password">管理员登录密码</label>
+          <div class="input-wrapper">
+            <input type="password" id="password" class="form-input" placeholder="请输入管理控制台登录密码" required autofocus autocomplete="current-password">
+            <button type="button" class="input-icon-btn" onclick="togglePasswordVisibility('password', this)" title="显示/隐藏密码">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="form-extra">
+          <label class="checkbox-label">
+            <input type="checkbox" id="remember-me" checked>
+            <span>保持 30 天登入状态</span>
+          </label>
+        </div>
+
+        <button type="submit" id="btn-submit" class="btn-submit">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          安全登入控制台
+        </button>
+        {% endif %}
+      </form>
+
+      <div class="card-footer">
+        <div class="footer-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+          HMAC-SHA256
+        </div>
+        <div class="footer-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          防爆破防护
+        </div>
+        <div class="footer-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 14 14"></polyline></svg>
+          防端口嗅探
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const isConfigured = {{ 'true' if is_configured else 'false' }};
+
+    function togglePasswordVisibility(inputId, btn) {
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+      } else {
+        input.type = 'password';
+        btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+      }
+    }
+
+    function showAlert(msg) {
+      const box = document.getElementById('alert-box');
+      box.textContent = msg;
+      box.style.display = 'block';
+    }
+
+    function hideAlert() {
+      const box = document.getElementById('alert-box');
+      box.style.display = 'none';
+    }
+
+    async function handleAuthSubmit(e) {
+      e.preventDefault();
+      hideAlert();
+      const btn = document.getElementById('btn-submit');
+      const originalText = btn.innerHTML;
+
+      if (!isConfigured) {
+        // 首次初始化
+        const p1 = document.getElementById('init-password').value.trim();
+        const p2 = document.getElementById('init-confirm-password').value.trim();
+        if (!p1) {
+          showAlert('请输入管理员密码');
+          return;
+        }
+        if (p1.length < 5) {
+          showAlert('为了保障机器凭据安全，密码长度不能少于 5 个字符');
+          return;
+        }
+        if (p1 !== p2) {
+          showAlert('两次输入的密码不一致，请重新输入');
+          return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '正在初始化系统安全配置...';
+
+        try {
+          const res = await fetch('/api/init_auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: p1 })
+          });
+          const data = await res.json();
+          if (data.success) {
+            btn.innerHTML = '✅ 初始化成功，正在进入控制台...';
+            setTimeout(() => { window.location.href = '/'; }, 600);
+          } else {
+            showAlert(data.message || '初始化失败，请重试');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+          }
+        } catch (err) {
+          showAlert(`请求出错: ${err.message}`);
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      } else {
+        // 正常登录
+        const pwd = document.getElementById('password').value;
+        const remember = document.getElementById('remember-me') ? document.getElementById('remember-me').checked : true;
+        if (!pwd) {
+          showAlert('请输入登录密码');
+          return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '正在验证身份安全口令...';
+
+        try {
+          const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pwd, remember: remember })
+          });
+          const data = await res.json();
+          if (data.success) {
+            btn.innerHTML = '✅ 身份验证通过，正在跳转...';
+            setTimeout(() => { 
+              const redirect = new URLSearchParams(window.location.search).get('next') || '/';
+              window.location.href = redirect; 
+            }, 500);
+          } else {
+            showAlert(data.message || '密码错误，请重新输入');
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+            document.getElementById('password').value = '';
+            document.getElementById('password').focus();
+          }
+        } catch (err) {
+          showAlert(`网络请求异常: ${err.message}`);
+          btn.disabled = false;
+          btn.innerHTML = originalText;
+        }
+      }
+    }
+  </script>
+</body>
+</html>
