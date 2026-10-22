@@ -1170,6 +1170,8 @@ function openGlobalConfigModal() {
   document.getElementById('cfg-proto-reality').checked = protos.reality !== false;
   document.getElementById('cfg-proto-hy2').checked = protos.hy2 !== false;
   document.getElementById('cfg-proto-tuic').checked = protos.tuic !== false;
+  document.getElementById('cfg-proto-xhttp').checked = protos.xhttp !== false;
+  document.getElementById('cfg-proto-awg').checked = protos.awg !== false;
 
   document.getElementById('cfg-script-url').value = g.install_script_url || '';
   document.getElementById('cfg-concurrency').value = g.concurrency || 5;
@@ -1199,7 +1201,9 @@ async function saveGlobalConfig() {
     default_protocols: {
       reality: document.getElementById('cfg-proto-reality').checked,
       hy2: document.getElementById('cfg-proto-hy2').checked,
-      tuic: document.getElementById('cfg-proto-tuic').checked
+      tuic: document.getElementById('cfg-proto-tuic').checked,
+      xhttp: document.getElementById('cfg-proto-xhttp').checked,
+      awg: document.getElementById('cfg-proto-awg').checked
     },
     install_script_url: document.getElementById('cfg-script-url').value.trim(),
     concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5,
@@ -1376,19 +1380,21 @@ function updateNatPreview() {
   const pReality = startP;
   const pHy2 = startP + 1;
   const pTuic = startP + 2;
-  const remStart = startP + 3;
+  const pXhttp = startP + 3;
+  const pAwg = startP + 4;
+  const remStart = startP + 5;
 
-  if (total < 3) {
-    preview.textContent = `❌ 端口总数只有 ${total} 个，不足以分配三大协议 (至少需 3 个端口)`;
+  if (total < 5) {
+    preview.textContent = `❌ 端口总数只有 ${total} 个，不足以分配全套协议 (至少需 5 个端口)`;
     return;
   }
 
-  let hopStr = '无 (端口不足5个)';
+  let hopStr = '无 (端口不足7个)';
   if (remStart <= endP) {
     hopStr = `${remStart}-${endP}`;
   }
 
-  preview.textContent = `💡 规划结果: Reality=${pReality}, Hy2=${pHy2}, TUIC=${pTuic}, Hy2跳跃池=${hopStr} (共${total}端口)`;
+  preview.textContent = `💡 规划结果: Reality=${pReality}, Hy2=${pHy2}, TUIC=${pTuic}, xHTTP=${pXhttp}, AWG=${pAwg}, Hy2跳跃池=${hopStr} (共${total}端口)`;
 }
 
 async function saveServer() {

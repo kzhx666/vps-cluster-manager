@@ -312,7 +312,7 @@
           </div>
           <div class="form-row">
             <div class="form-group col-12">
-              <label>默认启用协议 (全系支持三合一单机多协议):</label>
+              <label>默认启用协议 (全系支持单机多协议):</label>
               <div class="checkbox-group">
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-reality" checked>
@@ -325,6 +325,14 @@
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-tuic" checked>
                   <span>TUIC v5 (QUIC 极低延迟备用)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-xhttp" checked>
+                  <span>直连原生 xHTTP (HTTP/2-3 多路复用)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-awg" checked>
+                  <span>AmneziaWG (特征混淆 WireGuard)</span>
                 </label>
               </div>
             </div>
@@ -471,7 +479,7 @@
               <label for="srv-port-range">NAT 可用端口范围 (例如: 10020-10039):</label>
               <input type="text" id="srv-port-range" placeholder="例如: 10020-10039">
               <div id="nat-calc-preview" class="nat-preview-badge">
-                💡 自动规划分配: Reality=10020, TUIC=10021, Hy2=10022, Hy2跳跃池=10023-10039
+                💡 自动规划分配: Reality=10020, Hy2=10021, TUIC=10022, xHTTP=10023, AWG=10024, Hy2跳跃池=10025-10039
               </div>
             </div>
           </div>

@@ -48,7 +48,9 @@ DEFAULT_CONFIG = {
         "default_protocols": {
             "reality": True,
             "hy2": True,
-            "tuic": True
+            "tuic": True,
+            "xhttp": True,
+            "awg": True
         },
         "default_ssh_port": 22,
         "default_ssh_user": "root",
@@ -477,6 +479,8 @@ def calculate_ports(server, global_cfg):
     enable_r = 1 if protocols.get('reality', True) else 0
     enable_h = 1 if protocols.get('hy2', True) else 0
     enable_t = 1 if protocols.get('tuic', True) else 0
+    enable_x = 1 if protocols.get('xhttp', True) else 0
+    enable_awg = 1 if protocols.get('awg', True) else 0
 
     if port_mode == 'nat' and port_range:
         # Expected format: "10020-10039" or "10020,10021,10022..."
@@ -490,7 +494,7 @@ def calculate_ports(server, global_cfg):
         else:
             port_list = [int(port_range.strip())]
 
-        needed_ports = enable_r + enable_h + enable_t
+        needed_ports = enable_r + enable_h + enable_t + enable_x + enable_awg
         if len(port_list) < needed_ports:
             raise ValueError(f"NAT 端口池数量不足！已启用 {needed_ports} 个协议，但仅提供了 {len(port_list)} 个端口。")
 
@@ -501,6 +505,10 @@ def calculate_ports(server, global_cfg):
         if enable_h: idx += 1
         p_tuic = port_list[idx] if enable_t else 0
         if enable_t: idx += 1
+        p_xhttp = port_list[idx] if enable_x else 0
+        if enable_x: idx += 1
+        p_awg = port_list[idx] if enable_awg else 0
+        if enable_awg: idx += 1
 
         remaining_ports = port_list[idx:]
         hop_range = ""
@@ -513,8 +521,10 @@ def calculate_ports(server, global_cfg):
             "p_reality": p_reality,
             "p_hy2": p_hy2,
             "p_tuic": p_tuic,
+            "p_xhttp": p_xhttp,
+            "p_awg": p_awg,
             "hop_range": hop_range,
-            "allocated_summary": f"Reality:{p_reality} Hy2:{p_hy2} TUIC:{p_tuic} 跳跃:{hop_range or '无'}"
+            "allocated_summary": f"Reality:{p_reality} Hy2:{p_hy2} TUIC:{p_tuic} xHTTP:{p_xhttp} AWG:{p_awg} 跳跃:{hop_range or '无'}"
         }
     else:
         # Standard auto mode: find free ports or leave empty for installer auto-detect
@@ -523,6 +533,8 @@ def calculate_ports(server, global_cfg):
             "p_reality": 0,
             "p_hy2": 0,
             "p_tuic": 0,
+            "p_xhttp": 0,
+            "p_awg": 0,
             "hop_range": "",
             "allocated_summary": "标准全端口 (安装脚本动态随机安全高位端口 + 默认跳跃)"
         }
@@ -874,6 +886,8 @@ def deploy_server_worker(task_id, server_id):
             env_exports.append(f"export PORT_REALITY={port_info['p_reality']}")
             env_exports.append(f"export PORT_HY2={port_info['p_hy2']}")
             env_exports.append(f"export PORT_TUIC={port_info['p_tuic']}")
+            env_exports.append(f"export PORT_XHTTP_DIRECT={port_info.get('p_xhttp', 0)}")
+            env_exports.append(f"export PORT_AWG={port_info.get('p_awg', 0)}")
             if port_info["hop_range"]:
                 env_exports.append(f"export SB_HOP_RANGE=\"{port_info['hop_range']}\"")
             else:
@@ -884,6 +898,8 @@ def deploy_server_worker(task_id, server_id):
         env_exports.append(f"export SB_ENABLE_REALITY={1 if protocols.get('reality', True) else 0}")
         env_exports.append(f"export SB_ENABLE_HY2={1 if protocols.get('hy2', True) else 0}")
         env_exports.append(f"export SB_ENABLE_TUIC={1 if protocols.get('tuic', True) else 0}")
+        env_exports.append(f"export SB_ENABLE_XHTTP_DIRECT={1 if protocols.get('xhttp', True) else 0}")
+        env_exports.append(f"export SB_ENABLE_AWG={1 if protocols.get('awg', True) else 0}")
 
         # Reality SNI (custom or auto-select)
         reality_sni = server.get("reality_sni", "").strip()
