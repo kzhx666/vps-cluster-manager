@@ -10,14 +10,59 @@ import subprocess
 import hmac
 import hashlib
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, send_file, Response, make_response, redirect
-
-app = Flask(__name__, static_folder='static', template_folder='templates')
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, 'data')
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 
+if len(sys.argv) > 1 and sys.argv[1] in ('passwd', 'password'):
+    print("==========================================================")
+    print("  VPS Cluster Manager - 管理员密码与入口路径维护")
+    print("==========================================================")
+    cfg_path = CONFIG_FILE if os.path.exists(CONFIG_FILE) else "/etc/vps-cluster-manager/config.json"
+    cfg = {}
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+        except Exception:
+            cfg = {}
+    g = cfg.setdefault("global", {})
+    cur_pwd = g.get("admin_password") or "[尚未设定 / 首次初始化模式]"
+    cur_path = g.get("login_path") or "login"
+    cur_stealth = "已开启 (防扫描隐蔽模式，未授权访问根路径返回404)" if g.get("stealth_mode") else "未开启 (常规模式)"
+    print(f"当前私密管理入口: /{cur_path}")
+    print(f"防扫描隐蔽状态:   {cur_stealth}")
+    print(f"当前管理员密码:   {cur_pwd}")
+    print("----------------------------------------------------------")
+    try:
+        new_p = input("请输入新的管理员密码 (直接回车保持不变): ").strip()
+        if new_p:
+            if len(new_p) < 5:
+                print("错误: 为保障安全，密码长度不能少于 5 位！")
+                sys.exit(1)
+            g["admin_password"] = new_p
+            os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+            with open(cfg_path, 'w', encoding='utf-8') as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
+            print(f"[ OK ] 管理员密码已成功重设为: {new_p}")
+
+        new_path = input("请输入新的自定义管理入口路径 (如: my_secret_admin，直接回车保持不变): ").strip().lstrip('/')
+        if new_path:
+            clean_path = re.sub(r'[^a-zA-Z0-9_\-]', '', new_path)
+            if clean_path:
+                g["login_path"] = clean_path
+                os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
+                with open(cfg_path, 'w', encoding='utf-8') as f:
+                    json.dump(cfg, f, indent=2, ensure_ascii=False)
+                print(f"[ OK ] 管理入口路径已成功设置为: /{clean_path}")
+    except (KeyboardInterrupt, EOFError):
+        print("\n操作已取消")
+    sys.exit(0)
+
+from flask import Flask, request, jsonify, render_template, send_file, Response, make_response, redirect
+
+app = Flask(__name__, static_folder='static', template_folder='templates')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Try importing paramiko; if unavailable, fallback runner will be used

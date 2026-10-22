@@ -69,22 +69,45 @@ function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
     modal.style.display = 'flex';
-    requestAnimationFrame(() => modal.classList.add('open'));
+    modal.classList.add('open');
+    if (!modal._hasBackdropListener) {
+      modal._hasBackdropListener = true;
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          closeModal(modalId);
+        }
+      });
+    }
   }
 }
+window.openModal = openModal;
 
 function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
     modal.classList.remove('open');
     setTimeout(() => {
-      modal.style.display = 'none';
+      if (!modal.classList.contains('open')) {
+        modal.style.display = 'none';
+      }
       if (modalId === 'modal-terminal') {
         stopTerminalPolling();
       }
-    }, 200);
+    }, 180);
   }
 }
+window.closeModal = closeModal;
+
+// Global Escape key listener to close topmost open modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const openModals = document.querySelectorAll('.modal-backdrop.open');
+    if (openModals.length > 0) {
+      const topModal = openModals[openModals.length - 1];
+      closeModal(topModal.id);
+    }
+  }
+});
 
 // ------------------------------------------------------------------------------
 // Data Fetch & Synchronization
@@ -608,14 +631,17 @@ function handleModalCmdKeydown(e) {
 window.handleModalCmdKeydown = handleModalCmdKeydown;
 
 function openCmdForSingleServer(serverId) {
-  const server = (state.config.servers || []).find(s => s.id === serverId);
-  if (!server) return;
+  const server = (state.config.servers || []).find(s => String(s.id) === String(serverId));
   state.cmdTargetIds = [serverId];
   openModal('modal-cmd-exec');
 
   const targetDesc = document.getElementById('cmd-modal-target-desc');
   if (targetDesc) {
-    targetDesc.textContent = `单机目标: [${server.name || server.host}] (${server.host}:${server.port})`;
+    if (server) {
+      targetDesc.textContent = `单机目标: [${server.name || server.host}] (${server.host}:${server.port})`;
+    } else {
+      targetDesc.textContent = `单机目标: [主机 ID: ${serverId}]`;
+    }
   }
   const modalInput = document.getElementById('modal-cmd-input');
   if (modalInput) {
@@ -1015,22 +1041,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-add-server')?.addEventListener('click', () => openServerModal(null));
   document.getElementById('btn-save-server')?.addEventListener('click', saveServer);
 
-  document.getElementById('btn-batch-import')?.addEventListener('click', () => {
-    document.getElementById('batch-import-text').value = '';
-    const nameEl = document.getElementById('batch-import-name');
-    if (nameEl) nameEl.value = '';
-    const testContainer = document.getElementById('batch-test-container');
-    if (testContainer) testContainer.style.display = 'none';
-    const validBtn = document.getElementById('btn-do-batch-import-valid');
-    if (validBtn) validBtn.style.display = 'none';
-    const testBtn = document.getElementById('btn-batch-test');
-    if (testBtn) {
-      testBtn.disabled = false;
-      document.getElementById('btn-batch-test-text').textContent = '连通性测试';
-    }
-    state.testedBatchItems = null;
-    openModal('modal-batch-import');
-  });
+  document.getElementById('btn-batch-import')?.addEventListener('click', openBatchImportModal);
   document.getElementById('btn-batch-test')?.addEventListener('click', doBatchConnectivityTest);
   document.getElementById('btn-do-batch-import')?.addEventListener('click', () => doBatchImport(false));
   document.getElementById('btn-do-batch-import-valid')?.addEventListener('click', () => doBatchImport(true));
@@ -1188,6 +1199,27 @@ function openGlobalConfigModal() {
 
   openModal('modal-global-config');
 }
+window.openGlobalConfigModal = openGlobalConfigModal;
+
+function openBatchImportModal() {
+  const inputEl = document.getElementById('batch-import-text');
+  if (inputEl) inputEl.value = '';
+  const nameEl = document.getElementById('batch-import-name');
+  if (nameEl) nameEl.value = '';
+  const testContainer = document.getElementById('batch-test-container');
+  if (testContainer) testContainer.style.display = 'none';
+  const validBtn = document.getElementById('btn-do-batch-import-valid');
+  if (validBtn) validBtn.style.display = 'none';
+  const testBtn = document.getElementById('btn-batch-test');
+  if (testBtn) {
+    testBtn.disabled = false;
+    const testText = document.getElementById('btn-batch-test-text');
+    if (testText) testText.textContent = '连通性测试';
+  }
+  state.testedBatchItems = null;
+  openModal('modal-batch-import');
+}
+window.openBatchImportModal = openBatchImportModal;
 
 async function saveGlobalConfig() {
   const saveBtn = document.getElementById('btn-save-global-config');
@@ -2332,12 +2364,10 @@ window.submitChangePassword = submitChangePassword;
       try {
         const cloned = res.clone();
         const data = await cloned.json();
-        if (data && data.need_login) {
-          showToast('登录凭据已失效或未授权，即将跳转到登录页...', 'warning');
+          showToast('登录凭据已失效或未授权，即将跳转到登录入口...', 'warning');
           setTimeout(() => {
-            window.location.href = '/login';
-          }, 600);
-        }
+            window.location.href = '/';
+          }, 800);
       } catch (e) {}
     }
     return res;
