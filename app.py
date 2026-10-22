@@ -859,7 +859,7 @@ echo "PREFLIGHT_RESULT:{\"os\":\"$OS_NAME\",\"version\":\"$OS_VER\",\"arch\":\"$
 # ------------------------------------------------------------------------------
 def deploy_server_worker(task_id, server_id):
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         finish_task(task_id, success=False, error=f"未找到服务器 ID: {server_id}")
         return
@@ -1041,7 +1041,7 @@ fi
         with config_lock:
             cur_cfg = load_config()
             for s in cur_cfg.get("servers", []):
-                if s.get("id") == server_id:
+                if str(s.get("id")) == str(server_id):
                     s["status"] = "online" if is_running else "warning"
                     s["os_info"] = f"{os_str} ({arch_str})"
                     if bbr_str:
@@ -1065,7 +1065,7 @@ fi
         with config_lock:
             cur_cfg = load_config()
             for s in cur_cfg.get("servers", []):
-                if s.get("id") == server_id:
+                if str(s.get("id")) == str(server_id):
                     s["status"] = "error"
                     s["last_error"] = str(e)
                     break
@@ -1230,11 +1230,15 @@ def require_authentication():
             return redirect('/')
         return render_template('login.html', is_configured=is_auth_configured(), login_path=get_login_path())
 
-    allowed_endpoints = ['/login', '/api/login', '/api/init_auth', '/logout']
-    if request.path in allowed_endpoints:
+    # Authentication API endpoints & logout
+    if request.path in ['/api/login', '/api/init_auth', '/logout']:
         return None
 
+    # Authenticated user handling
     if is_authenticated():
+        # If accessing disabled /login path when a custom secret path is active, return 404
+        if request.path == '/login' and cur_login_path != '/login':
+            return "404 Not Found", 404
         return None
 
     # Block unauthenticated API access immediately
@@ -1245,17 +1249,19 @@ def require_authentication():
             "need_login": True
         }), 401
 
-    # In stealth mode, accessing root without auth returns 404 to deceive port scanners
-    if is_stealth_mode() and request.path == '/':
-        return "404 Not Found", 404
+    # Root path / handling:
+    # Only redirect / to /login when login_path is default 'login' and stealth mode is OFF
+    if request.path == '/' and cur_login_path == '/login' and not is_stealth_mode():
+        return redirect('/login')
 
-    # Otherwise redirect to the login gateway
-    return redirect(f"{cur_login_path}?next={request.path}")
+    # For ALL other unauthenticated paths (custom path active, stealth mode on, previous secret paths, scanner probes):
+    # Strictly return 404! Never redirect to cur_login_path!
+    return "404 Not Found", 404
 
 @app.route('/login', methods=['GET'])
 def login_route():
     cur_login_path = '/' + get_login_path()
-    if is_stealth_mode() and cur_login_path != '/login':
+    if cur_login_path != '/login':
         return "404 Not Found", 404
     if is_authenticated():
         return redirect('/')
@@ -1505,7 +1511,7 @@ def update_server(server_id):
 def delete_server(server_id):
     cfg = load_config()
     orig_len = len(cfg.get("servers", []))
-    cfg["servers"] = [s for s in cfg.get("servers", []) if s.get("id") != server_id]
+    cfg["servers"] = [s for s in cfg.get("servers", []) if str(s.get("id")) != str(server_id)]
     if len(cfg["servers"]) == orig_len:
         return jsonify({"success": False, "message": "未找到要删除的服务器"}), 404
     save_config(cfg)
@@ -1514,13 +1520,13 @@ def delete_server(server_id):
 @app.route('/api/server/batch_delete', methods=['POST'])
 def batch_delete_servers():
     data = request.get_json() or {}
-    sids = data.get('server_ids', [])
+    sids = [str(x) for x in (data.get('server_ids') or [])]
     if not sids:
         return jsonify({"success": False, "message": "未选定任何 VPS"}), 400
     with config_lock:
         cur = load_config()
         original_count = len(cur.get("servers", []))
-        cur["servers"] = [s for s in cur.get("servers", []) if s.get("id") not in sids]
+        cur["servers"] = [s for s in cur.get("servers", []) if str(s.get("id")) not in sids]
         deleted_count = original_count - len(cur["servers"])
         save_config_unlocked(cur)
     return jsonify({"success": True, "message": f"已成功从集群管理面板移除 {deleted_count} 台 VPS", "count": deleted_count})
@@ -1589,7 +1595,7 @@ def backup_status():
 @app.route('/api/check_env/<server_id>', methods=['POST'])
 def check_env(server_id):
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
@@ -1645,7 +1651,7 @@ def check_env(server_id):
             with config_lock:
                 cur_cfg = load_config()
                 for s in cur_cfg.get("servers", []):
-                    if s.get("id") == server_id:
+                    if str(s.get("id")) == str(server_id):
                         s["latency_ms"] = latency_ms
                         s["os_info"] = f"{os_id} ({arch})"
                         s["bbr_info"] = bbr_str
@@ -1667,7 +1673,7 @@ def check_env(server_id):
 @app.route('/api/deploy/<server_id>', methods=['POST'])
 def deploy_server(server_id):
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
@@ -1679,11 +1685,11 @@ def deploy_server(server_id):
 @app.route('/api/deploy_all', methods=['POST'])
 def deploy_all():
     data = request.get_json(silent=True) or {}
-    req_sids = data.get('server_ids', [])
+    req_sids = [str(x) for x in (data.get('server_ids') or [])]
     cfg = load_config()
     servers = cfg.get("servers", [])
     if req_sids:
-        servers = [s for s in servers if s.get("id") in req_sids]
+        servers = [s for s in servers if str(s.get("id")) in req_sids]
     if not servers:
         return jsonify({"success": False, "message": "当前没有选定任何 VPS 或集群列表为空"}), 400
 
@@ -1829,7 +1835,7 @@ sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_q
 @app.route('/api/inspect/<server_id>', methods=['POST'])
 def inspect_single(server_id):
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
@@ -1837,7 +1843,7 @@ def inspect_single(server_id):
     with config_lock:
         cur_cfg = load_config()
         for s in cur_cfg.get("servers", []):
-            if s.get("id") == server_id:
+            if str(s.get("id")) == str(server_id):
                 s["last_check_result"] = res
                 if res.get("success"):
                     s["status"] = "online" if res.get("singbox_running") else "warning"
@@ -1854,11 +1860,11 @@ def inspect_single(server_id):
 @app.route('/api/inspect_all', methods=['POST'])
 def inspect_all():
     data = request.get_json(silent=True) or {}
-    req_sids = data.get('server_ids', [])
+    req_sids = [str(x) for x in (data.get('server_ids') or [])]
     cfg = load_config()
     servers = cfg.get("servers", [])
     if req_sids:
-        servers = [s for s in servers if s.get("id") in req_sids]
+        servers = [s for s in servers if str(s.get("id")) in req_sids]
     if not servers:
         return jsonify({"success": False, "message": "当前没有选定任何 VPS 或集群列表为空"}), 400
 
@@ -1878,7 +1884,7 @@ def inspect_all():
             with config_lock:
                 cur = load_config()
                 for target in cur.get("servers", []):
-                    if target.get("id") == sid:
+                    if str(target.get("id")) == str(sid):
                         target["last_check_result"] = res
                         if res.get("success"):
                             target["status"] = "online" if res.get("singbox_running") else "warning"
@@ -1909,7 +1915,7 @@ def inspect_all():
 @app.route('/api/test_unlock/<server_id>', methods=['POST'])
 def test_unlock(server_id):
     cfg = load_config()
-    server = next((s for s in cfg.get("servers", []) if s.get("id") == server_id), None)
+    server = next((s for s in cfg.get("servers", []) if str(s.get("id")) == str(server_id)), None)
     if not server:
         return jsonify({"success": False, "message": "服务器不存在"}), 404
 
@@ -1956,7 +1962,7 @@ echo "UNLOCK_RES:{\"openai\":\"$OPENAI_CODE\",\"youtube\":\"$YT_CODE\",\"netflix
         with config_lock:
             cur_cfg = load_config()
             for s in cur_cfg.get("servers", []):
-                if s.get("id") == server_id:
+                if str(s.get("id")) == str(server_id):
                     s.setdefault("last_check_result", {})["unlock"] = result
                     break
             save_config_unlocked(cur_cfg)
@@ -2287,7 +2293,8 @@ def batch_ops():
     cfg = load_config()
     servers = cfg.get("servers", [])
     if server_ids and len(server_ids) > 0:
-        targets = [s for s in servers if s.get("id") in server_ids]
+        str_sids = [str(x) for x in server_ids]
+        targets = [s for s in servers if str(s.get("id")) in str_sids]
     else:
         targets = servers
 
@@ -2632,11 +2639,12 @@ def reorder_servers():
 
     with config_lock:
         cfg = load_config()
-        id_map = {s.get("id"): s for s in cfg.get("servers", [])}
+        id_map = {str(s.get("id")): s for s in cfg.get("servers", [])}
         reordered = []
         for sid in new_ids:
-            if sid in id_map:
-                reordered.append(id_map.pop(sid))
+            sid_str = str(sid)
+            if sid_str in id_map:
+                reordered.append(id_map.pop(sid_str))
         # Keep any remaining servers not explicitly in new_ids at the end
         for remaining in id_map.values():
             reordered.append(remaining)
@@ -2660,7 +2668,8 @@ def exec_custom_cmd():
     cfg = load_config()
     servers = cfg.get("servers", [])
     if server_ids and len(server_ids) > 0:
-        targets = [s for s in servers if s.get("id") in server_ids]
+        str_sids = [str(x) for x in server_ids]
+        targets = [s for s in servers if str(s.get("id")) in str_sids]
     else:
         targets = servers
 

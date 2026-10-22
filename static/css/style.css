@@ -675,16 +675,17 @@ body.dark-theme {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 99999;
   display: none;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.75);
+  background: rgba(0, 0, 0, 0.78);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   opacity: 0;
   pointer-events: none;
+  visibility: hidden;
   transition: opacity var(--transition-normal);
 }
 
@@ -692,6 +693,8 @@ body.dark-theme {
   display: flex !important;
   opacity: 1 !important;
   pointer-events: auto !important;
+  visibility: visible !important;
+  z-index: 99999 !important;
 }
 
 .modal-dialog {
@@ -707,10 +710,13 @@ body.dark-theme {
   transform: scale(0.96);
   transition: transform var(--transition-normal);
   overflow: hidden;
+  z-index: 100000;
+  pointer-events: auto !important;
 }
 
 .modal-backdrop.open .modal-dialog {
   transform: scale(1);
+  pointer-events: auto !important;
 }
 
 .modal-md { max-width: 540px; }

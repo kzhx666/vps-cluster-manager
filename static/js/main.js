@@ -68,8 +68,20 @@ function showToast(message, type = 'info') {
 function openModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
-    modal.style.display = 'flex';
+    modal.style.setProperty('display', 'flex', 'important');
+    modal.style.setProperty('opacity', '1', 'important');
+    modal.style.setProperty('pointer-events', 'auto', 'important');
+    modal.style.setProperty('visibility', 'visible', 'important');
+    modal.style.setProperty('z-index', '999999', 'important');
     modal.classList.add('open');
+
+    const dialog = modal.querySelector('.modal-dialog');
+    if (dialog) {
+      dialog.style.setProperty('pointer-events', 'auto', 'important');
+      dialog.style.setProperty('z-index', '1000000', 'important');
+      dialog.style.setProperty('transform', 'scale(1)', 'important');
+    }
+
     if (!modal._hasBackdropListener) {
       modal._hasBackdropListener = true;
       modal.addEventListener('click', (e) => {
@@ -78,6 +90,8 @@ function openModal(modalId) {
         }
       });
     }
+  } else {
+    console.warn(`[openModal] Modal with ID '${modalId}' not found in DOM`);
   }
 }
 window.openModal = openModal;
@@ -86,9 +100,12 @@ function closeModal(modalId) {
   const modal = document.getElementById(modalId);
   if (modal) {
     modal.classList.remove('open');
+    modal.style.setProperty('opacity', '0', 'important');
+    modal.style.setProperty('pointer-events', 'none', 'important');
+    modal.style.setProperty('visibility', 'hidden', 'important');
     setTimeout(() => {
       if (!modal.classList.contains('open')) {
-        modal.style.display = 'none';
+        modal.style.setProperty('display', 'none', 'important');
       }
       if (modalId === 'modal-terminal') {
         stopTerminalPolling();
@@ -730,7 +747,7 @@ async function dispatchCmdExecution(cmd, targetIds) {
   const targetsCount = targetIds && targetIds.length > 0 ? targetIds.length : (state.config.servers || []).length;
   if (targetDesc) {
     if (targetIds && targetIds.length === 1) {
-      const s = (state.config.servers || []).find(x => x.id === targetIds[0]);
+      const s = (state.config.servers || []).find(x => String(x.id) === String(targetIds[0]));
       targetDesc.textContent = s ? `单机目标: [${s.name || s.host}]` : `目标: 1 台 VPS`;
     } else {
       targetDesc.textContent = targetIds && targetIds.length > 0 ? `批量目标: ${targetIds.length} 台 VPS` : `全量目标: 全部 ${targetsCount} 台 VPS`;
@@ -838,7 +855,7 @@ function switchCmdTab(tabId) {
     const buttons = tabsBar.querySelectorAll('.cmd-tab');
     buttons.forEach((b, idx) => {
       if (idx === 0 && tabId === 'all') b.classList.add('active');
-      else if (idx > 0 && (state.lastCmdResults[idx - 1] || {}).id === tabId) b.classList.add('active');
+      else if (idx > 0 && String((state.lastCmdResults[idx - 1] || {}).id) === String(tabId)) b.classList.add('active');
       else b.classList.remove('active');
     });
   }
@@ -890,7 +907,7 @@ function renderCmdScreenContent() {
     });
     screen.innerHTML = html;
   } else {
-    const r = results.find(x => x.id === state.activeCmdTab);
+    const r = results.find(x => String(x.id) === String(state.activeCmdTab));
     if (!r) {
       screen.innerHTML = '<div class="cmd-empty-hint">未找到该服务器输出</div>';
       return;
@@ -1525,7 +1542,7 @@ function editServer(serverId) {
 window.editServer = editServer;
 
 async function restartSingleServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : '此服务器';
 
   showToast(`正在向 [${name}] 下发重启服务指令...`, 'info');
@@ -1548,7 +1565,7 @@ async function restartSingleServer(serverId) {
 window.restartSingleServer = restartSingleServer;
 
 async function uninstallSingleServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : '此服务器';
 
   if (!confirm(`⚠️ 危险操作确认：\n\n确定要在 [${name}] 上彻底卸载 Sing-box、删除所有节点配置、清除证书与 Argo 守护进程吗？\n\n此操作将直接连接服务器并执行彻底卸载清理，全过程实时在控制台展示。`)) {
@@ -1576,7 +1593,7 @@ window.uninstallSingleServer = uninstallSingleServer;
 window.editServer = editServer;
 
 async function deleteServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : '此服务器';
 
   if (!confirm(`确定要从集群中移除 [${name}] 吗？`)) {
@@ -1596,12 +1613,13 @@ async function deleteServer(serverId) {
     showToast(`删除出错: ${err.message}`, 'error');
   }
 }
+window.deleteServer = deleteServer;
 
 // ------------------------------------------------------------------------------
 // Single Actions: Deploy, Check Env, Inspect, Unlock
 // ------------------------------------------------------------------------------
 async function deploySingleServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : 'VPS';
 
   showToast(`正在启动 [${name}] 的自动化一键部署任务...`, 'info');
@@ -1618,9 +1636,10 @@ async function deploySingleServer(serverId) {
     showToast(`部署请求出错: ${err.message}`, 'error');
   }
 }
+window.deploySingleServer = deploySingleServer;
 
 async function checkEnvServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : 'VPS';
 
   showToast(`正在发起 [${name}] 的系统环境与网络延迟探测...`, 'info');
@@ -1642,7 +1661,7 @@ async function checkEnvServer(serverId) {
 window.checkEnvServer = checkEnvServer;
 
 async function inspectSingleServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : 'VPS';
 
   showToast(`正在对 [${name}] 发起服务状态与网络巡检...`, 'info');
@@ -1668,14 +1687,22 @@ async function inspectSingleServer(serverId) {
 window.inspectSingleServer = inspectSingleServer;
 
 async function testUnlockServer(serverId) {
-  const s = (state.config.servers || []).find(i => i.id === serverId);
+  const s = (state.config.servers || []).find(i => String(i.id) === String(serverId));
   const name = s ? (s.name || s.host) : 'VPS';
+  const host = s ? s.host : '';
 
-  document.getElementById('unlock-modal-title').textContent = `流媒体与 AI 解锁报告: [${name}]`;
-  document.getElementById('unlock-modal-subtitle').textContent = `正在从 ${s.host} 远程执行测速与风控穿透校验...`;
-  document.getElementById('unlock-val-openai').textContent = '测试中...';
-  document.getElementById('unlock-val-youtube').textContent = '测试中...';
-  document.getElementById('unlock-val-netflix').textContent = '测试中...';
+  const titleEl = document.getElementById('unlock-modal-title');
+  if (titleEl) titleEl.textContent = `流媒体与 AI 解锁报告: [${name}]`;
+  const subEl = document.getElementById('unlock-modal-subtitle');
+  if (subEl) subEl.textContent = host ? `正在从 ${host} 远程执行测速与风控穿透校验...` : '正在远程执行测速与风控穿透校验...';
+  
+  const openaiEl = document.getElementById('unlock-val-openai');
+  if (openaiEl) { openaiEl.textContent = '测试中...'; openaiEl.className = 'unlock-card-status badge-info'; }
+  const ytEl = document.getElementById('unlock-val-youtube');
+  if (ytEl) { ytEl.textContent = '测试中...'; ytEl.className = 'unlock-card-status badge-info'; }
+  const nfEl = document.getElementById('unlock-val-netflix');
+  if (nfEl) { nfEl.textContent = '测试中...'; nfEl.className = 'unlock-card-status badge-info'; }
+
   openModal('modal-unlock');
 
   try {
@@ -1683,12 +1710,14 @@ async function testUnlockServer(serverId) {
     const data = await res.json();
     if (data.success) {
       const u = data.data;
-      document.getElementById('unlock-modal-subtitle').textContent = `测试完成于 ${new Date().toLocaleTimeString()}`;
+      if (subEl) subEl.textContent = `测试完成于 ${new Date().toLocaleTimeString()}`;
       
       const setVal = (elId, text) => {
         const el = document.getElementById(elId);
-        el.textContent = text;
-        el.className = 'unlock-card-status ' + (text.includes('解锁') || text.includes('原生') ? 'badge-success' : 'badge-danger');
+        if (el) {
+          el.textContent = text;
+          el.className = 'unlock-card-status ' + (text.includes('解锁') || text.includes('原生') ? 'badge-success' : 'badge-danger');
+        }
       };
 
       setVal('unlock-val-openai', u.openai);
@@ -1696,12 +1725,13 @@ async function testUnlockServer(serverId) {
       setVal('unlock-val-netflix', u.netflix);
       loadConfig();
     } else {
-      document.getElementById('unlock-modal-subtitle').textContent = `测试失败: ${data.message}`;
+      if (subEl) subEl.textContent = `测试失败: ${data.message}`;
     }
   } catch (err) {
-    document.getElementById('unlock-modal-subtitle').textContent = `请求失败: ${err.message}`;
+    if (subEl) subEl.textContent = `请求失败: ${err.message}`;
   }
 }
+window.testUnlockServer = testUnlockServer;
 
 // ------------------------------------------------------------------------------
 // Batch Actions: Deploy All, Inspect All, Batch Import
