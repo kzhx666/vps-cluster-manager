@@ -282,16 +282,16 @@ function renderServers() {
 
     // Status Pill
     let statusClass = 'idle';
-    let statusText = '⚪ 待部署';
+    let statusText = '待部署';
     if (s.status === 'online') {
       statusClass = 'online';
-      statusText = '🟢 在线运行';
+      statusText = '在线运行';
     } else if (s.status === 'warning') {
       statusClass = 'warning';
-      statusText = '🟡 进程异常';
+      statusText = '进程异常';
     } else if (s.status === 'error') {
       statusClass = 'error';
-      statusText = '🔴 连接异常';
+      statusText = '连接异常';
     }
 
     // NAT tag
@@ -1030,12 +1030,25 @@ function cleanArgoToken(text) {
 document.addEventListener('DOMContentLoaded', () => {
   loadConfig();
 
-  // Search input
+  // Search input & clear button
   const searchInput = document.getElementById('search-input');
+  const searchClearBtn = document.getElementById('search-clear-btn');
   if (searchInput) {
     searchInput.addEventListener('input', (e) => {
       state.search = e.target.value.trim();
+      if (searchClearBtn) {
+        searchClearBtn.style.display = e.target.value ? 'flex' : 'none';
+      }
       renderServers();
+    });
+  }
+  if (searchClearBtn && searchInput) {
+    searchClearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      state.search = '';
+      searchClearBtn.style.display = 'none';
+      renderServers();
+      searchInput.focus();
     });
   }
 

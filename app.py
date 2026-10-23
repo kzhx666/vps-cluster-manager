@@ -1023,15 +1023,30 @@ fi
         append_task_log(task_id, "部署执行完毕！正在验证服务运行状态与提取节点凭证...", step="验证服务状态", progress=90)
 
         # Check service status
-        check_cmd = "systemctl is-active sing-box 2>/dev/null || rc-service sing-box status 2>/dev/null || pgrep -f sing-box"
+        check_cmd = r'''
+if systemctl is-active sing-box >/dev/null 2>&1; then echo "active";
+elif command -v rc-service >/dev/null 2>&1 && rc-service sing-box status 2>/dev/null | grep -qi "started"; then echo "active";
+elif [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box status 2>/dev/null | grep -qi "started"; then echo "active";
+elif pidof sing-box >/dev/null 2>&1 || pgrep -f "sing-box" >/dev/null 2>&1; then echo "active";
+elif [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then echo "active";
+else rc-service sing-box status 2>/dev/null || systemctl is-active sing-box 2>/dev/null || echo "inactive"; fi
+'''
         c_code, c_out = runner.run_cmd(check_cmd, timeout=10)
-        is_running = ("active" in c_out.lower() or "running" in c_out.lower() or (c_code == 0 and c_out.strip()))
+        c_lower = c_out.lower()
+        is_running = any(k in c_lower for k in ("active", "started", "running")) or any(s.strip().isdigit() for s in c_out.splitlines() if s.strip())
 
         # Check cloudflared service if Argo is enabled
         if argo_is_on and argo_domain and argo_token:
-            cf_check = "systemctl is-active cloudflared 2>/dev/null || rc-service cloudflared status 2>/dev/null || pgrep -f cloudflared"
+            cf_check = r'''
+if systemctl is-active cloudflared >/dev/null 2>&1; then echo "active";
+elif command -v rc-service >/dev/null 2>&1 && rc-service cloudflared status 2>/dev/null | grep -qi "started"; then echo "active";
+elif [ -x /etc/init.d/cloudflared ] && /etc/init.d/cloudflared status 2>/dev/null | grep -qi "started"; then echo "active";
+elif pidof cloudflared >/dev/null 2>&1 || pgrep -f "cloudflared" >/dev/null 2>&1; then echo "active";
+else rc-service cloudflared status 2>/dev/null || systemctl is-active cloudflared 2>/dev/null || echo "inactive"; fi
+'''
             _, cf_out = runner.run_cmd(cf_check, timeout=10)
-            cf_running = ("active" in cf_out.lower() or "running" in cf_out.lower())
+            cf_lower = cf_out.lower()
+            cf_running = any(k in cf_lower for k in ("active", "started", "running")) or any(s.strip().isdigit() for s in cf_out.splitlines() if s.strip())
             if cf_running:
                 append_task_log(task_id, "Cloudflare Argo 隧道守护进程已连接并正常在线！", progress=95)
             else:
@@ -1770,15 +1785,39 @@ def inspect_server_sync(server):
 
         inspect_script = r'''
 echo "---SB_STATUS---"
-systemctl is-active sing-box 2>/dev/null || rc-service sing-box status 2>/dev/null || pgrep -f sing-box 2>/dev/null || echo "inactive"
+if systemctl is-active sing-box >/dev/null 2>&1; then
+    echo "active"
+elif command -v rc-service >/dev/null 2>&1 && rc-service sing-box status 2>/dev/null | grep -qi "started"; then
+    echo "active"
+elif [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box status 2>/dev/null | grep -qi "started"; then
+    echo "active"
+elif pidof sing-box >/dev/null 2>&1; then
+    echo "active"
+elif pgrep -f "sing-box" >/dev/null 2>&1; then
+    echo "active"
+elif [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then
+    echo "active"
+else
+    rc-service sing-box status 2>/dev/null || systemctl is-active sing-box 2>/dev/null || pgrep -f sing-box 2>/dev/null || echo "inactive"
+fi
 echo "---ARGO_STATUS---"
-systemctl is-active cloudflared 2>/dev/null || pgrep -f cloudflared 2>/dev/null || echo "inactive"
+if systemctl is-active cloudflared >/dev/null 2>&1; then
+    echo "active"
+elif command -v rc-service >/dev/null 2>&1 && rc-service cloudflared status 2>/dev/null | grep -qi "started"; then
+    echo "active"
+elif [ -x /etc/init.d/cloudflared ] && /etc/init.d/cloudflared status 2>/dev/null | grep -qi "started"; then
+    echo "active"
+elif pidof cloudflared >/dev/null 2>&1 || pgrep -f "cloudflared" >/dev/null 2>&1; then
+    echo "active"
+else
+    rc-service cloudflared status 2>/dev/null || systemctl is-active cloudflared 2>/dev/null || echo "inactive"
+fi
 echo "---PORTS---"
 ss -lntu 2>/dev/null | awk '{print $1,$5}' || netstat -lntu 2>/dev/null | awk '{print $1,$4}'
 echo "---IPS---"
-curl -s4m4 ip.sb 2>/dev/null || true
+curl -s4m4 ip.sb 2>/dev/null || wget -qO- -T 4 -4 ip.sb 2>/dev/null || true
 echo ""
-curl -s6m4 ip.sb 2>/dev/null || true
+curl -s6m4 ip.sb 2>/dev/null || wget -qO- -T 4 -6 ip.sb 2>/dev/null || true
 echo "---BBR---"
 sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || cat /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null || echo "unknown"
 sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_qdisc 2>/dev/null || echo "unknown"
@@ -1799,10 +1838,12 @@ sysctl -n net.core.default_qdisc 2>/dev/null || cat /proc/sys/net/core/default_q
                 current_sec = line_str
                 continue
             if current_sec == "---SB_STATUS---" and line_str:
-                if "active" in line_str.lower() or "running" in line_str.lower() or line_str.isdigit():
+                lower = line_str.lower()
+                if any(k in lower for k in ("active", "started", "running")) or line_str.isdigit():
                     sb_status = "active"
             elif current_sec == "---ARGO_STATUS---" and line_str:
-                if "active" in line_str.lower() or "running" in line_str.lower() or line_str.isdigit():
+                lower = line_str.lower()
+                if any(k in lower for k in ("active", "started", "running")) or line_str.isdigit():
                     argo_status = "active"
             elif current_sec == "---PORTS---" and line_str:
                 ports.append(line_str)
@@ -2343,9 +2384,18 @@ def batch_ops():
                 try:
                     runner.connect()
                     if action == "restart":
-                        cmd = "systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null; sleep 1; systemctl is-active sing-box 2>/dev/null || rc-service sing-box status 2>/dev/null || pgrep -f sing-box"
+                        cmd = r'''
+systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null || /etc/init.d/sing-box restart 2>/dev/null || true
+sleep 1
+if systemctl is-active sing-box >/dev/null 2>&1; then echo "active";
+elif command -v rc-service >/dev/null 2>&1 && rc-service sing-box status 2>/dev/null | grep -qi "started"; then echo "active";
+elif [ -x /etc/init.d/sing-box ] && /etc/init.d/sing-box status 2>/dev/null | grep -qi "started"; then echo "active";
+elif pidof sing-box >/dev/null 2>&1 || pgrep -f "sing-box" >/dev/null 2>&1; then echo "active";
+elif [ -f /run/sing-box.pid ] && kill -0 "$(cat /run/sing-box.pid 2>/dev/null)" 2>/dev/null; then echo "active";
+else rc-service sing-box status 2>/dev/null || systemctl is-active sing-box 2>/dev/null || echo "inactive"; fi
+'''
                         _, out = runner.run_cmd(cmd, timeout=15)
-                        status_ok = "active" in out.lower() or "running" in out.lower()
+                        status_ok = any(w in out.lower() for w in ("active", "started", "running")) or any(s.strip().isdigit() for s in out.splitlines() if s.strip())
                         append_task_log(task_id, f"[{name}] 重启完毕: {'🟢 服务运行中' if status_ok else '🟡 状态待确认'}")
                         success_count += 1
                     elif action == "update_core":

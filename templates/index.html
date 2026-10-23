@@ -137,30 +137,50 @@
         </div>
       </section>
 
-      <!-- Toolbar: Filter & Search -->
+      <!-- Toolbar: Filter & Search (Redesigned Balanced Cluster) -->
       <section class="toolbar-section">
         <div class="search-box">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
           <input type="text" id="search-input" placeholder="搜索 VPS 名称、IP 地址、域名或订阅标签...">
+          <button id="search-clear-btn" class="search-clear-btn" type="button" title="清空搜索" style="display:none;">&times;</button>
         </div>
 
-        <div class="filter-pills">
-          <button class="filter-pill active" data-filter="all">全部 (<span id="count-all">0</span>)</button>
-          <button class="filter-pill" data-filter="online">🟢 在线 (<span id="count-online">0</span>)</button>
-          <button class="filter-pill" data-filter="idle">⚪ 待部署 (<span id="count-idle">0</span>)</button>
-          <button class="filter-pill" data-filter="error">🔴 异常 (<span id="count-error">0</span>)</button>
-        </div>
+        <div class="toolbar-actions-cluster">
+          <div class="filter-segmented-group" role="tablist">
+            <button class="filter-pill active" data-filter="all" title="查看所有 VPS">
+              <span>全部</span>
+              <span class="count-pill" id="count-all">0</span>
+            </button>
+            <button class="filter-pill filter-online" data-filter="online" title="仅查看正常在线运行的 VPS">
+              <span class="filter-dot dot-online"></span>
+              <span>在线</span>
+              <span class="count-pill" id="count-online">0</span>
+            </button>
+            <button class="filter-pill filter-idle" data-filter="idle" title="仅查看未安装或待配置的 VPS">
+              <span class="filter-dot dot-idle"></span>
+              <span>待部署</span>
+              <span class="count-pill" id="count-idle">0</span>
+            </button>
+            <button class="filter-pill filter-error" data-filter="error" title="仅查看进程异常或离线的 VPS">
+              <span class="filter-dot dot-error"></span>
+              <span>异常</span>
+              <span class="count-pill" id="count-error">0</span>
+            </button>
+          </div>
 
-        <div class="toolbar-right">
-          <button id="btn-export-config" class="btn btn-sm btn-ghost" title="备份导出 JSON 配置">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-            导出配置
-          </button>
-          <label class="btn btn-sm btn-ghost" title="从 JSON 还原配置">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            导入配置
-            <input type="file" id="import-file-input" accept=".json" style="display:none;">
-          </label>
+          <div class="toolbar-divider"></div>
+
+          <div class="toolbar-btn-group">
+            <button id="btn-export-config" class="btn-toolbar-action" title="备份导出完整 JSON 配置至本地文件">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+              <span>导出配置</span>
+            </button>
+            <label class="btn-toolbar-action" title="从本地 JSON 配置文件还原 VPS 节点列表">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>导入配置</span>
+              <input type="file" id="import-file-input" accept=".json" style="display:none;">
+            </label>
+          </div>
         </div>
       </section>
 
