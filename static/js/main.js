@@ -309,7 +309,7 @@ function renderServers() {
 
     // Argo tag
     let argoTagHtml = s.argo_enabled && s.argo_domain 
-      ? `<span class="pill-tag tag-argo">Argo: ${escapeHtml(s.argo_domain)} (${(s.argo_transport === 'ws') ? 'WS' : 'xHTTP'})</span>` 
+      ? `<span class="pill-tag tag-argo">Argo: ${escapeHtml(s.argo_domain)} (VLESS+WS)</span>` 
       : '';
 
     // BBR badge
@@ -1211,10 +1211,10 @@ function openGlobalConfigModal() {
   document.getElementById('cfg-proto-reality').checked = protos.reality !== false;
   document.getElementById('cfg-proto-hy2').checked = protos.hy2 !== false;
   document.getElementById('cfg-proto-tuic').checked = protos.tuic !== false;
-  document.getElementById('cfg-proto-xhttp').checked = protos.xhttp !== false;
-  document.getElementById('cfg-proto-awg').checked = protos.awg !== false;
 
   document.getElementById('cfg-script-url').value = g.install_script_url || '';
+  const hopInput = document.getElementById('cfg-default-hop-range');
+  if (hopInput) hopInput.value = g.default_hop_range !== undefined ? g.default_hop_range : '30000-32000';
   document.getElementById('cfg-concurrency').value = g.concurrency || 5;
 
   document.getElementById('cfg-auto-inspect').checked = g.auto_inspect === true;
@@ -1270,10 +1270,9 @@ async function saveGlobalConfig() {
     default_protocols: {
       reality: document.getElementById('cfg-proto-reality').checked,
       hy2: document.getElementById('cfg-proto-hy2').checked,
-      tuic: document.getElementById('cfg-proto-tuic').checked,
-      xhttp: document.getElementById('cfg-proto-xhttp').checked,
-      awg: document.getElementById('cfg-proto-awg').checked
+      tuic: document.getElementById('cfg-proto-tuic').checked
     },
+    default_hop_range: document.getElementById('cfg-default-hop-range') ? document.getElementById('cfg-default-hop-range').value.trim() : '30000-32000',
     install_script_url: document.getElementById('cfg-script-url').value.trim(),
     concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5,
     auto_inspect: document.getElementById('cfg-auto-inspect').checked,
@@ -1379,7 +1378,6 @@ function openServerModal(serverId = null) {
 
     document.getElementById('srv-argo-enabled').checked = !!server.argo_enabled;
     document.getElementById('srv-argo-domain').value = server.argo_domain || '';
-    document.getElementById('srv-argo-transport').value = server.argo_transport || 'xhttp';
     document.getElementById('srv-argo-token').value = server.argo_token || '';
 
     const isKey = server.auth_type === 'private_key';
@@ -1406,7 +1404,6 @@ function openServerModal(serverId = null) {
 
     document.getElementById('srv-argo-enabled').checked = false;
     document.getElementById('srv-argo-domain').value = '';
-    document.getElementById('srv-argo-transport').value = 'xhttp';
     document.getElementById('srv-argo-token').value = '';
 
     document.getElementById('grp-password').style.display = 'block';
@@ -1434,39 +1431,49 @@ function updateNatPreview() {
   }
   preview.style.display = 'block';
 
-  if (!rangeInput || !rangeInput.includes('-')) {
-    preview.textContent = '💡 请输入连续范围 (例如: 10020-10039)';
+  if (!rangeInput || (!rangeInput.includes('-') && !rangeInput.includes(','))) {
+    preview.textContent = '💡 请输入连续范围或逗号分隔端口 (例如: 10020-10039)';
     return;
   }
 
-  const parts = rangeInput.split('-');
-  const startP = parseInt(parts[0].trim());
-  const endP = parseInt(parts[1].trim());
+  let portList = [];
+  if (rangeInput.includes('-')) {
+    const parts = rangeInput.split('-');
+    const startP = parseInt(parts[0].trim());
+    const endP = parseInt(parts[1].trim());
+    if (isNaN(startP) || isNaN(endP) || endP <= startP) {
+      preview.textContent = '⚠️ 端口范围格式不正确，请输入例如 10020-10039';
+      return;
+    }
+    for (let p = startP; p <= endP; p++) portList.push(p);
+  } else {
+    portList = rangeInput.split(',').map(x => parseInt(x.trim())).filter(x => !isNaN(x) && x > 0);
+  }
 
-  if (isNaN(startP) || isNaN(endP) || endP <= startP) {
-    preview.textContent = '⚠️ 端口范围格式不正确，请输入例如 10020-10039';
+  const protos = (state.config && state.config.global && state.config.global.default_protocols) || {};
+  const enR = protos.reality !== false;
+  const enH = protos.hy2 !== false;
+  const enT = protos.tuic !== false;
+  const needed = (enR ? 1 : 0) + (enH ? 1 : 0) + (enT ? 1 : 0);
+
+  if (portList.length < needed) {
+    preview.textContent = `❌ 端口总数只有 ${portList.length} 个，不足以分配已启用的 ${needed} 个协议`;
     return;
   }
 
-  const total = endP - startP + 1;
-  const pReality = startP;
-  const pHy2 = startP + 1;
-  const pTuic = startP + 2;
-  const pXhttp = startP + 3;
-  const pAwg = startP + 4;
-  const remStart = startP + 5;
+  let idx = 0;
+  const pReality = enR ? portList[idx++] : 0;
+  const pHy2 = enH ? portList[idx++] : 0;
+  const pTuic = enT ? portList[idx++] : 0;
+  const rem = portList.slice(idx);
 
-  if (total < 5) {
-    preview.textContent = `❌ 端口总数只有 ${total} 个，不足以分配全套协议 (至少需 5 个端口)`;
-    return;
+  let hopStr = '无 (剩余端口不足2个)';
+  if (enH && rem.length >= 2) {
+    const isContig = rem.every((v, i) => i === 0 || v === rem[i - 1] + 1);
+    hopStr = isContig ? `${rem[0]}-${rem[rem.length - 1]}` : rem.join(',');
   }
 
-  let hopStr = '无 (端口不足7个)';
-  if (remStart <= endP) {
-    hopStr = `${remStart}-${endP}`;
-  }
-
-  preview.textContent = `💡 规划结果: Reality=${pReality}, Hy2=${pHy2}, TUIC=${pTuic}, xHTTP=${pXhttp}, AWG=${pAwg}, Hy2跳跃池=${hopStr} (共${total}端口)`;
+  preview.textContent = `💡 规划结果: Reality=${pReality}, Hy2=${pHy2}, TUIC=${pTuic}, Hy2跳跃池=${hopStr} (共${portList.length}端口)`;
 }
 
 async function saveServer() {
@@ -1512,7 +1519,7 @@ async function saveServer() {
       reality_sni: document.getElementById('srv-reality-sni').value.trim(),
       argo_enabled: document.getElementById('srv-argo-enabled').checked,
       argo_domain: document.getElementById('srv-argo-domain').value.trim(),
-      argo_transport: document.getElementById('srv-argo-transport').value || 'xhttp',
+      argo_transport: 'ws',
       argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)
     };
 
@@ -1930,24 +1937,20 @@ async function triggerBatchOp(action, targetIds = null) {
       confirm: `确定要向 ${scopeText} 发送指令，批量重启 Sing-box 核心进程吗？` 
     },
     update_core: { 
-      title: '批量升级 Sing-box 核心 (支持AWG)', 
-      confirm: `确定要在 ${scopeText} 上并发升级 Sing-box 核心（自动适配最新支持 AmneziaWG 混淆特性核心）吗？` 
+      title: '批量升级 Sing-box 核心', 
+      confirm: `确定要在 ${scopeText} 上并发升级 Sing-box 官方最新稳定版核心吗？` 
     },
     update_cloudflared: { 
       title: '批量升级 Cloudflare 隧道 (cloudflared)', 
       confirm: `确定要在 ${scopeText} 上并发升级 Cloudflare 隧道核心 (cloudflared) 至最新官方稳定版吗？` 
     },
-    update_xray: { 
-      title: '批量升级 Xray-core (xHTTP伴侣)', 
-      confirm: `确定要在 ${scopeText} 上并发升级 Xray-core 核心（Direct xHTTP 伴侣）至最新版本吗？` 
-    },
     push_nodes: { 
       title: '批量推送节点至订阅管理平台', 
-      confirm: `确定要让 ${scopeText} 重新将本机所有可用节点（含 Reality/Hysteria2/TUIC/xHTTP/AWG/Argo 等）同步推送到订阅管理平台吗？` 
+      confirm: `确定要让 ${scopeText} 重新将本机所有可用节点（Reality / Hysteria2 / TUIC / Argo VLESS+WS）同步推送到订阅管理平台吗？` 
     },
     update_script: { 
       title: '批量更新 sb 本地运维脚本', 
-      confirm: `确定要在 ${scopeText} 上更新 /usr/local/bin/sb 脚本至 GitHub 最新主干版本吗？` 
+      confirm: `确定要在 ${scopeText} 上刷新 /usr/local/bin/sb 快捷运维脚本至最新版本吗？` 
     },
     reapply_bbr: { 
       title: '批量刷新激活 BBR+fq', 
@@ -1955,7 +1958,7 @@ async function triggerBatchOp(action, targetIds = null) {
     },
     uninstall: { 
       title: '彻底卸载节点脚本与全部服务', 
-      confirm: `⚠️ 高危操作警告：确定要在 ${scopeText} 上【彻底停止并卸载 Sing-box、Xray、Argo 隧道、域名证书、端口规则与所有节点配置】吗？该操作不可逆！` 
+      confirm: `⚠️ 高危操作警告：确定要在 ${scopeText} 上【彻底停止并卸载 Sing-box、Argo 隧道、域名证书、端口规则与所有节点配置】吗？该操作不可逆！` 
     }
   };
 

@@ -64,9 +64,8 @@
           </button>
           <div id="batch-ops-menu" class="dropdown-menu">
             <button class="dropdown-item" onclick="triggerBatchOp('restart')">🔄 批量重启 Sing-box 服务</button>
-            <button class="dropdown-item" onclick="triggerBatchOp('update_core')">⬆️ 批量升级 Sing-box 核心 (支持AWG)</button>
+            <button class="dropdown-item" onclick="triggerBatchOp('update_core')">⬆️ 批量升级 Sing-box 核心</button>
             <button class="dropdown-item" onclick="triggerBatchOp('update_cloudflared')">☁️ 批量升级 Cloudflare 隧道 (cloudflared)</button>
-            <button class="dropdown-item" onclick="triggerBatchOp('update_xray')">📡 批量升级 Xray-core (xHTTP伴侣)</button>
             <button class="dropdown-item" onclick="triggerBatchOp('push_nodes')">🚀 批量推送节点至订阅管理平台</button>
             <button class="dropdown-item" onclick="triggerBatchOp('update_script')">📝 批量更新 sb 本地运维脚本</button>
             <button class="dropdown-item" onclick="triggerBatchOp('reapply_bbr')">⚡ 批量刷新激活 BBR+fq</button>
@@ -203,7 +202,7 @@
           <button class="btn btn-sm btn-primary-outline" onclick="inspectSelectedServers()" title="巡检已选主机">🩺 巡检</button>
           <button class="btn btn-sm btn-secondary" onclick="openCommandModalForSelected()" title="向已选 VPS 批量发送 Shell 命令">💻 批量命令</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选 Sing-box">🔄 重启</button>
-          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心(支持AWG)">⬆️ 升Singbox</button>
+          <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心">⬆️ 升Singbox</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_cloudflared', getSelectedIds())" title="升级 Cloudflare 隧道(cloudflared)">☁️ 升CF隧道</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('push_nodes', getSelectedIds())" title="重新推送节点至管理平台">🚀 推节点</button>
           <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('reapply_bbr', getSelectedIds())" title="刷新 BBR">⚡ BBR</button>
@@ -348,7 +347,7 @@
           </div>
           <div class="form-row">
             <div class="form-group col-12">
-              <label>默认启用协议 (全系支持单机多协议):</label>
+              <label>默认启用协议 (精简三大王牌协议，默认全开):</label>
               <div class="checkbox-group">
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-reality" checked>
@@ -356,29 +355,25 @@
                 </label>
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-hy2" checked>
-                  <span>Hysteria 2 (UDP 极速丢包克星)</span>
+                  <span>Hysteria 2 (UDP 极速丢包克星、默认开启)</span>
                 </label>
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-tuic" checked>
-                  <span>TUIC v5 (QUIC 极低延迟备用)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="cfg-proto-xhttp" checked>
-                  <span>直连原生 xHTTP (HTTP/2-3 多路复用)</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="checkbox" id="cfg-proto-awg" checked>
-                  <span>AmneziaWG (特征混淆 WireGuard)</span>
+                  <span>TUIC v5 (QUIC 极低延迟备用、默认开启)</span>
                 </label>
               </div>
             </div>
           </div>
           <div class="form-row">
-            <div class="form-group col-8">
+            <div class="form-group col-6">
               <label for="cfg-script-url">Sing-box 安装脚本源:</label>
               <input type="text" id="cfg-script-url" value="https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh">
             </div>
-            <div class="form-group col-4">
+            <div class="form-group col-3">
+              <label for="cfg-default-hop-range">标准模式 Hy2 跳跃池:</label>
+              <input type="text" id="cfg-default-hop-range" value="30000-32000" placeholder="30000-32000">
+            </div>
+            <div class="form-group col-3">
               <label for="cfg-concurrency">批量部署并发数:</label>
               <input type="number" id="cfg-concurrency" value="5" min="1" max="20">
             </div>
@@ -545,7 +540,7 @@
               <label for="srv-port-range">NAT 可用端口范围 (例如: 10020-10039):</label>
               <input type="text" id="srv-port-range" placeholder="例如: 10020-10039">
               <div id="nat-calc-preview" class="nat-preview-badge">
-                💡 自动规划分配: Reality=10020, Hy2=10021, TUIC=10022, xHTTP=10023, AWG=10024, Hy2跳跃池=10025-10039
+                💡 自动规划分配: Reality=10020, Hy2=10021, TUIC=10022, Hy2跳跃池=10023-10039
               </div>
             </div>
           </div>
@@ -585,18 +580,17 @@
           </div>
           <div id="grp-argo-details" style="display: none;">
             <div class="form-row">
-              <div class="form-group col-6">
+              <div class="form-group col-7">
                 <label for="srv-argo-domain">绑定的 Argo 域名 (例如: argo-hk.example.com):</label>
                 <input type="text" id="srv-argo-domain" placeholder="argo-hk.example.com">
               </div>
-              <div class="form-group col-6">
-                <label for="srv-argo-transport">穿透传输协议:</label>
-                <select id="srv-argo-transport" class="form-control">
-                  <option value="xhttp" selected>xHTTP (H3/UDP) [推荐 OpenClash / 现代客户端极速优选]</option>
-                  <option value="ws">WebSocket (经典兼容模式)</option>
-                </select>
+              <div class="form-group col-5">
+                <label>穿透传输协议:</label>
+                <div style="padding: 9px 12px; border-radius: 8px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: #6ee7b7; font-size: 13px; font-weight: 600;">
+                  VLESS + WebSocket (经典防封模式)
+                </div>
                 <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
-                  🚀 推荐 xHTTP：承接 HTTP/3 (QUIC) 边缘加速，OpenClash 原生畅享防 DPI 阻断
+                  🛡️ 统一采用 Sing-box 原生 VLESS+WS + 随机路径，配合 CF 优选 IP 稳定抗封
                 </small>
               </div>
             </div>
@@ -908,7 +902,7 @@
         <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('restart', getSelectedIds())" title="重启已选主机 Sing-box 核心">
           🔄 重启
         </button>
-        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心 (支持AWG)">
+        <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_core', getSelectedIds())" title="升级 Sing-box 核心">
           ⬆️ 升Singbox
         </button>
         <button class="btn btn-sm btn-secondary" onclick="triggerBatchOp('update_cloudflared', getSelectedIds())" title="升级 Cloudflare 隧道 (cloudflared)">

@@ -98,10 +98,9 @@ DEFAULT_CONFIG = {
         "default_protocols": {
             "reality": True,
             "hy2": True,
-            "tuic": True,
-            "xhttp": True,
-            "awg": True
+            "tuic": True
         },
+        "default_hop_range": "30000-32000",
         "default_ssh_port": 22,
         "default_ssh_user": "root",
         "install_script_url": "https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh",
@@ -232,10 +231,26 @@ def load_config():
             if k not in data.get("global", {}):
                 data.setdefault("global", {})[k] = v
 
-        # Auto-migrate and normalize legacy server subscription tags:
-        # tag_main must be [name]本机, tag_argo must be [name]优选
+        # Auto-migrate legacy protocols (only keep reality, hy2, tuic) and argo_transport (ws)
         modified_tags = False
+        g_protos = data.setdefault("global", {}).get("default_protocols")
+        if not isinstance(g_protos, dict):
+            data["global"]["default_protocols"] = {"reality": True, "hy2": True, "tuic": True}
+            modified_tags = True
+        else:
+            if "xhttp" in g_protos or "awg" in g_protos:
+                g_protos.pop("xhttp", None)
+                g_protos.pop("awg", None)
+                modified_tags = True
+            for pk in ("reality", "hy2", "tuic"):
+                if pk not in g_protos:
+                    g_protos[pk] = True
+                    modified_tags = True
+
         for s in data.get("servers", []):
+            if s.get("argo_transport") and s.get("argo_transport") != "ws":
+                s["argo_transport"] = "ws"
+                modified_tags = True
             base_name = (s.get("name") or s.get("host") or "").strip()
             if not base_name:
                 continue
@@ -535,8 +550,6 @@ def calculate_ports(server, global_cfg):
     enable_r = 1 if protocols.get('reality', True) else 0
     enable_h = 1 if protocols.get('hy2', True) else 0
     enable_t = 1 if protocols.get('tuic', True) else 0
-    enable_x = 1 if protocols.get('xhttp', True) else 0
-    enable_awg = 1 if protocols.get('awg', True) else 0
 
     if port_mode == 'nat' and port_range:
         # Expected format: "10020-10039" or "10020,10021,10022..."
@@ -550,7 +563,7 @@ def calculate_ports(server, global_cfg):
         else:
             port_list = [int(port_range.strip())]
 
-        needed_ports = enable_r + enable_h + enable_t + enable_x + enable_awg
+        needed_ports = enable_r + enable_h + enable_t
         if len(port_list) < needed_ports:
             raise ValueError(f"NAT 端口池数量不足！已启用 {needed_ports} 个协议，但仅提供了 {len(port_list)} 个端口。")
 
@@ -561,38 +574,33 @@ def calculate_ports(server, global_cfg):
         if enable_h: idx += 1
         p_tuic = port_list[idx] if enable_t else 0
         if enable_t: idx += 1
-        p_xhttp = port_list[idx] if enable_x else 0
-        if enable_x: idx += 1
-        p_awg = port_list[idx] if enable_awg else 0
-        if enable_awg: idx += 1
 
         remaining_ports = port_list[idx:]
         hop_range = ""
-        if len(remaining_ports) >= 3 and enable_h:
-            # Build hop range string
-            hop_range = f"{remaining_ports[0]}-{remaining_ports[-1]}"
+        if len(remaining_ports) >= 2 and enable_h:
+            if remaining_ports == list(range(remaining_ports[0], remaining_ports[-1] + 1)):
+                hop_range = f"{remaining_ports[0]}-{remaining_ports[-1]}"
+            else:
+                hop_range = ",".join(str(p) for p in remaining_ports)
 
         return {
             "mode": "nat",
             "p_reality": p_reality,
             "p_hy2": p_hy2,
             "p_tuic": p_tuic,
-            "p_xhttp": p_xhttp,
-            "p_awg": p_awg,
             "hop_range": hop_range,
-            "allocated_summary": f"Reality:{p_reality} Hy2:{p_hy2} TUIC:{p_tuic} xHTTP:{p_xhttp} AWG:{p_awg} 跳跃:{hop_range or '无'}"
+            "allocated_summary": f"Reality:{p_reality} Hy2:{p_hy2} TUIC:{p_tuic} 跳跃:{hop_range or '无'}"
         }
     else:
         # Standard auto mode: find free ports or leave empty for installer auto-detect
+        default_hop = (global_cfg.get("default_hop_range") or "30000-32000").strip() if enable_h else ""
         return {
             "mode": "auto",
             "p_reality": 0,
             "p_hy2": 0,
             "p_tuic": 0,
-            "p_xhttp": 0,
-            "p_awg": 0,
-            "hop_range": "",
-            "allocated_summary": "标准全端口 (安装脚本动态随机安全高位端口 + 默认跳跃)"
+            "hop_range": default_hop,
+            "allocated_summary": f"标准全端口 (随机安全高位端口 + 跳跃:{default_hop or '无'})"
         }
 
 # ------------------------------------------------------------------------------
@@ -942,20 +950,19 @@ def deploy_server_worker(task_id, server_id):
             env_exports.append(f"export PORT_REALITY={port_info['p_reality']}")
             env_exports.append(f"export PORT_HY2={port_info['p_hy2']}")
             env_exports.append(f"export PORT_TUIC={port_info['p_tuic']}")
-            env_exports.append(f"export PORT_XHTTP_DIRECT={port_info.get('p_xhttp', 0)}")
-            env_exports.append(f"export PORT_AWG={port_info.get('p_awg', 0)}")
             if port_info["hop_range"]:
                 env_exports.append(f"export SB_HOP_RANGE=\"{port_info['hop_range']}\"")
             else:
                 env_exports.append("export SB_HOP_RANGE=\"\"")
+        else:
+            if port_info.get("hop_range"):
+                env_exports.append(f"export SB_HOP_RANGE=\"{port_info['hop_range']}\"")
 
-        # Protocols
+        # Protocols (Reality / Hy2 / TUIC)
         protocols = global_cfg.get("default_protocols", {})
         env_exports.append(f"export SB_ENABLE_REALITY={1 if protocols.get('reality', True) else 0}")
         env_exports.append(f"export SB_ENABLE_HY2={1 if protocols.get('hy2', True) else 0}")
         env_exports.append(f"export SB_ENABLE_TUIC={1 if protocols.get('tuic', True) else 0}")
-        env_exports.append(f"export SB_ENABLE_XHTTP_DIRECT={1 if protocols.get('xhttp', True) else 0}")
-        env_exports.append(f"export SB_ENABLE_AWG={1 if protocols.get('awg', True) else 0}")
 
         # Reality SNI (custom or auto-select)
         reality_sni = server.get("reality_sni", "").strip()
@@ -971,17 +978,21 @@ def deploy_server_worker(task_id, server_id):
             else:
                 env_exports.append("export SB_ACME_MODE=\"standalone\"")
 
-        # Argo (Dual export for maximum compatibility)
+        # Argo (VLESS+WS only; explicitly disable if turned off so stale STATE_FILE isn't reused)
         if argo_is_on and argo_domain and argo_token:
-            argo_trans = server.get('argo_transport', 'xhttp')
+            env_exports.append("export SB_ARGO_DISABLE=0")
             env_exports.append(f"export SB_ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export SB_ARGO_TOKEN=\"{argo_token}\"")
-            env_exports.append(f"export SB_ARGO_TRANSPORT=\"{argo_trans}\"")
+            env_exports.append("export SB_ARGO_TRANSPORT=\"ws\"")
             env_exports.append(f"export ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export ARGO_TOKEN=\"{argo_token}\"")
-            env_exports.append(f"export ARGO_TRANSPORT=\"{argo_trans}\"")
+            env_exports.append("export ARGO_TRANSPORT=\"ws\"")
+        else:
+            env_exports.append("export SB_ARGO_DISABLE=1")
+            env_exports.append("export SB_ARGO_DOMAIN=\"\"")
+            env_exports.append("export SB_ARGO_TOKEN=\"\"")
 
-        argo_status_desc = f"已启用 ({argo_domain} | {server.get('argo_transport', 'xhttp')})" if (argo_is_on and argo_domain and argo_token) else "未启用"
+        argo_status_desc = f"已启用 ({argo_domain} | VLESS+WS)" if (argo_is_on and argo_domain and argo_token) else "未启用"
         append_task_log(task_id, f"部署参数就绪: 端口策略 [{port_info['allocated_summary']}], Argo 隧道 [{argo_status_desc}]", progress=55)
 
         ts = int(time.time())
@@ -1470,7 +1481,7 @@ def add_server():
         "reality_sni": data.get('reality_sni', '').strip(),
         "argo_enabled": bool(data.get('argo_enabled', False)),
         "argo_domain": data.get('argo_domain', '').strip(),
-        "argo_transport": data.get('argo_transport', 'xhttp'),
+        "argo_transport": "ws",
         "argo_token": clean_argo_token(data.get('argo_token', '')),
         "status": "idle",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1501,7 +1512,7 @@ def update_server(server_id):
             elif field == 'argo_enabled':
                 server[field] = bool(data[field])
             elif field == 'argo_transport':
-                server['argo_transport'] = 'ws' if str(data[field]).lower() == 'ws' else 'xhttp'
+                server['argo_transport'] = 'ws'
             elif field == 'argo_token':
                 server[field] = clean_argo_token(data[field])
             elif field == 'name':
@@ -2284,7 +2295,7 @@ def batch_import():
             "reality_sni": "",
             "argo_enabled": False,
             "argo_domain": "",
-            "argo_transport": "xhttp",
+            "argo_transport": "ws",
             "argo_token": "",
             "status": "online" if item.get("success") else "idle",
             "latency": item.get("latency", 0),
@@ -2354,9 +2365,8 @@ def batch_ops():
     s_single_name = targets[0].get("name", targets[0].get("host")) if single_mode else ""
     action_names = {
         "restart": f"重启服务: [{s_single_name}]" if single_mode else f"批量重启服务 ({len(targets)}台)",
-        "update_core": f"更新Sing-box核心(含AWG): [{s_single_name}]" if single_mode else f"批量更新Sing-box核心(含AWG) ({len(targets)}台)",
+        "update_core": f"更新Sing-box核心: [{s_single_name}]" if single_mode else f"批量更新Sing-box核心 ({len(targets)}台)",
         "update_cloudflared": f"更新CF隧道核心: [{s_single_name}]" if single_mode else f"批量更新CF隧道核心 ({len(targets)}台)",
-        "update_xray": f"更新Xray核心: [{s_single_name}]" if single_mode else f"批量更新Xray核心 ({len(targets)}台)",
         "push_nodes": f"推送节点至订阅管理平台: [{s_single_name}]" if single_mode else f"批量推送节点至订阅管理平台 ({len(targets)}台)",
         "update_script": f"更新sb本地管理脚本: [{s_single_name}]" if single_mode else f"批量更新sb本地管理脚本 ({len(targets)}台)",
         "reapply_bbr": f"刷新激活BBR: [{s_single_name}]" if single_mode else f"批量刷新BBR ({len(targets)}台)",
@@ -2402,17 +2412,20 @@ else rc-service sing-box status 2>/dev/null || systemctl is-active sing-box 2>/d
                         cmd = r'''
 ARCH="$(uname -m)"
 case "$ARCH" in x86_64) A="amd64" ;; aarch64|arm64) A="arm64" ;; armv7*) A="armv7" ;; 386|i686) A="386" ;; *) A="amd64" ;; esac
-LX_TAG="$(curl -s4m6 https://api.github.com/repos/Leadaxe/sing-box-lx/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")"
-[ -z "$LX_TAG" ] && LX_TAG="v1.14.3-lx.22"
+SB_TAG="$(curl -s4m6 https://api.github.com/repos/SagerNet/sing-box/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")"
+if [ -z "$SB_TAG" ]; then
+  SB_TAG="$(curl -sI --connect-timeout 6 https://github.com/SagerNet/sing-box/releases/latest 2>/dev/null | grep -i '^location:' | grep -oE 'v[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1 || echo "")"
+fi
+[ -z "$SB_TAG" ] && SB_TAG="v1.12.12"
 
-TMP_DIR="$(mktemp -d /tmp/sb_lx_XXXXXX 2>/dev/null || mktemp -d)"
-LX_FILE="sing-box-${LX_TAG#v}-linux-${A}.tar.gz"
-LX_URL="https://github.com/Leadaxe/sing-box-lx/releases/download/${LX_TAG}/${LX_FILE}"
+TMP_DIR="$(mktemp -d /tmp/sb_core_XXXXXX 2>/dev/null || mktemp -d)"
+SB_FILE="sing-box-${SB_TAG#v}-linux-${A}.tar.gz"
+SB_URL="https://github.com/SagerNet/sing-box/releases/download/${SB_TAG}/${SB_FILE}"
 
-curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 60 "$LX_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
-wget -q -T 30 -O "$TMP_DIR/sb.tar.gz" "$LX_URL" || true
+curl -fsSL --connect-timeout 8 -m 60 "$SB_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$SB_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$SB_URL" -o "$TMP_DIR/sb.tar.gz" 2>/dev/null || \
+wget -q -T 30 -O "$TMP_DIR/sb.tar.gz" "$SB_URL" || true
 
 if [ -s "$TMP_DIR/sb.tar.gz" ]; then
   tar -xzf "$TMP_DIR/sb.tar.gz" -C "$TMP_DIR"
@@ -2423,18 +2436,18 @@ if [ -s "$TMP_DIR/sb.tar.gz" ]; then
     command -v setcap >/dev/null 2>&1 && setcap 'cap_net_bind_service,cap_net_admin=+ep' /usr/local/bin/sing-box 2>/dev/null || true
     systemctl restart sing-box 2>/dev/null || rc-service sing-box restart 2>/dev/null || true
     VER="$(/usr/local/bin/sing-box version 2>/dev/null | head -n1)"
-    echo "SUCCESS: $VER (支持AWG混淆特性)"
+    echo "SUCCESS: $VER"
   else
     echo "FAIL: 解压未找到 sing-box 二进制文件"
   fi
   rm -rf "$TMP_DIR"
 else
   rm -rf "$TMP_DIR"
-  echo "FAIL: 下载 Sing-box-lx ($LX_TAG) 核心失败"
+  echo "FAIL: 下载 Sing-box ($SB_TAG) 核心失败"
 fi
 '''
                         _, out = runner.run_cmd(cmd, timeout=90)
-                        append_task_log(task_id, f"[{name}] Sing-box核心(含AWG): {out.strip()[:100]}")
+                        append_task_log(task_id, f"[{name}] Sing-box核心: {out.strip()[:100]}")
                         success_count += 1
                     elif action == "update_cloudflared":
                         cmd = r'''
@@ -2468,47 +2481,6 @@ fi
                         _, out = runner.run_cmd(cmd, timeout=90)
                         append_task_log(task_id, f"[{name}] Cloudflare隧道核心: {out.strip()[:100]}")
                         success_count += 1
-                    elif action == "update_xray":
-                        cmd = r'''
-ARCH="$(uname -m)"
-case "$ARCH" in
-  x86_64) XARCH="64" ;;
-  aarch64|arm64) XARCH="arm64-v8a" ;;
-  armv7*) XARCH="arm32-v7a" ;;
-  386|i686) XARCH="32" ;;
-  *) XARCH="64" ;;
-esac
-TMP_DIR="$(mktemp -d /tmp/xray_XXXXXX 2>/dev/null || mktemp -d)"
-XTAG="$(curl -s4m6 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || echo "")"
-[ -z "$XTAG" ] && XTAG="v25.1.30"
-XURL="https://github.com/XTLS/Xray-core/releases/download/${XTAG}/Xray-linux-${XARCH}.zip"
-
-curl -fsSL --connect-timeout 8 -m 60 "https://ghproxy.net/$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 60 "https://hub.gitmirror.com/$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 60 "$XURL" -o "$TMP_DIR/xray.zip" 2>/dev/null || \
-wget -q -T 30 -O "$TMP_DIR/xray.zip" "$XURL" || true
-
-if [ -s "$TMP_DIR/xray.zip" ]; then
-  unzip -q -o "$TMP_DIR/xray.zip" -d "$TMP_DIR" 2>/dev/null || busybox unzip -q -o "$TMP_DIR/xray.zip" -d "$TMP_DIR" 2>/dev/null || true
-  if [ -f "$TMP_DIR/xray" ]; then
-    chmod +x "$TMP_DIR/xray"
-    cp -f "$TMP_DIR/xray" /usr/local/bin/xray-argo
-    chmod +x /usr/local/bin/xray-argo
-    systemctl restart xray-argo 2>/dev/null || rc-service xray-argo restart 2>/dev/null || true
-    VER="$(/usr/local/bin/xray-argo version 2>/dev/null | head -n1)"
-    echo "SUCCESS: $VER"
-  else
-    echo "FAIL: 解压后未找到 xray 可执行文件"
-  fi
-  rm -rf "$TMP_DIR"
-else
-  rm -rf "$TMP_DIR"
-  echo "FAIL: 下载 Xray-core 失败"
-fi
-'''
-                        _, out = runner.run_cmd(cmd, timeout=90)
-                        append_task_log(task_id, f"[{name}] Xray核心更新: {out.strip()[:100]}")
-                        success_count += 1
                     elif action == "push_nodes":
                         cmd = r'''
 if [ -x /usr/local/bin/sb ]; then
@@ -2523,21 +2495,26 @@ fi
                         append_task_log(task_id, f"[{name}] 同步节点: {out.strip()[:120]}")
                         success_count += 1
                     elif action == "update_script":
-                        cmd = r'''
-URL="https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh"
-curl -fsSL --connect-timeout 8 -m 30 "https://ghproxy.net/$URL" -o /usr/local/bin/sb 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 30 "https://hub.gitmirror.com/$URL" -o /usr/local/bin/sb 2>/dev/null || \
-curl -fsSL --connect-timeout 8 -m 30 "$URL" -o /usr/local/bin/sb 2>/dev/null || \
-wget -q -T 20 -O /usr/local/bin/sb "$URL" || true
-if [ -s /usr/local/bin/sb ] && grep -q "Sing-box" /usr/local/bin/sb 2>/dev/null; then
-  chmod +x /usr/local/bin/sb
-  echo "SUCCESS: /usr/local/bin/sb 脚本已更新至 GitHub 最新版"
+                        script_url = cfg.get("global", {}).get("install_script_url", "https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh")
+                        ts = int(time.time())
+                        cmd = f'''
+URL="{script_url}"
+TMP_SH="/tmp/sb_refresh_$(date +%s).sh"
+curl -fsSL --connect-timeout 8 -m 30 "${{URL}}?t={ts}" -o "$TMP_SH" 2>/dev/null || \\
+curl -fsSL --connect-timeout 8 -m 30 "https://ghproxy.net/$URL" -o "$TMP_SH" 2>/dev/null || \\
+curl -fsSL --connect-timeout 8 -m 30 "https://hub.gitmirror.com/$URL" -o "$TMP_SH" 2>/dev/null || \\
+curl -fsSL --connect-timeout 8 -m 30 "$URL" -o "$TMP_SH" 2>/dev/null || \\
+wget -q -T 20 -O "$TMP_SH" "$URL" || true
+if [ -s "$TMP_SH" ] && grep -q "Sing-box" "$TMP_SH" 2>/dev/null; then
+  /bin/bash "$TMP_SH" --refresh-sb 2>&1
+  rm -f "$TMP_SH"
 else
+  rm -f "$TMP_SH"
   echo "FAIL: 获取最新安装脚本失败"
 fi
 '''
                         _, out = runner.run_cmd(cmd, timeout=30)
-                        append_task_log(task_id, f"[{name}] 运维脚本更新: {out.strip()[:100]}")
+                        append_task_log(task_id, f"[{name}] 运维脚本更新: {out.strip()[:120]}")
                         success_count += 1
                     elif action == "reapply_bbr":
                         cmd = r'''
@@ -2636,12 +2613,20 @@ echo "UNINSTALLED_OK"
 
                         # 同步通知节点管理平台注销并清理已推送的订阅源
                         cur_cfg = load_config()
-                        push_target = cur_cfg.get("global", {}).get("push_target", {})
-                        p_url = (push_target.get("url") or "").strip().rstrip('/')
-                        p_tok = (push_target.get("token") or "").strip()
+                        g_cfg = cur_cfg.get("global", {})
+                        p_url = (g_cfg.get("push_url") or "").strip().rstrip('/')
+                        p_tok = (g_cfg.get("push_token") or "").strip()
                         if p_url and REQUESTS_AVAILABLE:
                             try:
-                                tags_to_clean = [f"{name}本机", f"{name}优选", f"{name}"]
+                                tags_to_clean = list(dict.fromkeys([
+                                    t for t in [
+                                        target_srv.get("tag_main", "").strip(),
+                                        target_srv.get("tag_argo", "").strip(),
+                                        f"{name}本机",
+                                        f"{name}优选",
+                                        name
+                                    ] if t
+                                ]))
                                 headers = {"Authorization": f"Bearer {p_tok}"} if p_tok else {}
                                 requests.post(
                                     f"{p_url}/api/delete_pushed_nodes",
