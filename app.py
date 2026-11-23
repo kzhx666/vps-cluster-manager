@@ -98,8 +98,13 @@ DEFAULT_CONFIG = {
         "default_protocols": {
             "reality": True,
             "hy2": True,
-            "tuic": True
+            "tuic": True,
+            "anytls": False,
+            "snell": False
         },
+        "default_snell_mode": "default",
+        "default_warp_mode": "off",
+        "default_argo_protocol": "http2",
         "default_hop_range": "30000-32000",
         "default_ssh_port": 22,
         "default_ssh_user": "root",
@@ -235,7 +240,7 @@ def load_config():
         modified_tags = False
         g_protos = data.setdefault("global", {}).get("default_protocols")
         if not isinstance(g_protos, dict):
-            data["global"]["default_protocols"] = {"reality": True, "hy2": True, "tuic": True}
+            data["global"]["default_protocols"] = {"reality": True, "hy2": True, "tuic": True, "anytls": False, "snell": False}
             modified_tags = True
         else:
             if "xhttp" in g_protos or "awg" in g_protos:
@@ -245,6 +250,10 @@ def load_config():
             for pk in ("reality", "hy2", "tuic"):
                 if pk not in g_protos:
                     g_protos[pk] = True
+                    modified_tags = True
+            for pk in ("anytls", "snell"):
+                if pk not in g_protos:
+                    g_protos[pk] = False
                     modified_tags = True
 
         for s in data.get("servers", []):
@@ -550,6 +559,8 @@ def calculate_ports(server, global_cfg):
     enable_r = 1 if protocols.get('reality', True) else 0
     enable_h = 1 if protocols.get('hy2', True) else 0
     enable_t = 1 if protocols.get('tuic', True) else 0
+    enable_a = 1 if protocols.get('anytls', False) else 0
+    enable_s = 1 if protocols.get('snell', False) else 0
 
     if port_mode == 'nat' and port_range:
         # Expected format: "10020-10039" or "10020,10021,10022..."
@@ -563,7 +574,7 @@ def calculate_ports(server, global_cfg):
         else:
             port_list = [int(port_range.strip())]
 
-        needed_ports = enable_r + enable_h + enable_t
+        needed_ports = enable_r + enable_h + enable_t + enable_a + enable_s
         if len(port_list) < needed_ports:
             raise ValueError(f"NAT 端口池数量不足！已启用 {needed_ports} 个协议，但仅提供了 {len(port_list)} 个端口。")
 
@@ -574,6 +585,10 @@ def calculate_ports(server, global_cfg):
         if enable_h: idx += 1
         p_tuic = port_list[idx] if enable_t else 0
         if enable_t: idx += 1
+        p_anytls = port_list[idx] if enable_a else 0
+        if enable_a: idx += 1
+        p_snell = port_list[idx] if enable_s else 0
+        if enable_s: idx += 1
 
         remaining_ports = port_list[idx:]
         hop_range = ""
@@ -583,13 +598,23 @@ def calculate_ports(server, global_cfg):
             else:
                 hop_range = ",".join(str(p) for p in remaining_ports)
 
+        parts_sum = []
+        if enable_r: parts_sum.append(f"Reality:{p_reality}")
+        if enable_h: parts_sum.append(f"Hy2:{p_hy2}")
+        if enable_t: parts_sum.append(f"TUIC:{p_tuic}")
+        if enable_a: parts_sum.append(f"AnyTLS:{p_anytls}")
+        if enable_s: parts_sum.append(f"Snell:{p_snell}")
+        parts_sum.append(f"跳跃:{hop_range or '无'}")
+
         return {
             "mode": "nat",
             "p_reality": p_reality,
             "p_hy2": p_hy2,
             "p_tuic": p_tuic,
+            "p_anytls": p_anytls,
+            "p_snell": p_snell,
             "hop_range": hop_range,
-            "allocated_summary": f"Reality:{p_reality} Hy2:{p_hy2} TUIC:{p_tuic} 跳跃:{hop_range or '无'}"
+            "allocated_summary": " ".join(parts_sum)
         }
     else:
         # Standard auto mode: find free ports or leave empty for installer auto-detect
@@ -599,6 +624,8 @@ def calculate_ports(server, global_cfg):
             "p_reality": 0,
             "p_hy2": 0,
             "p_tuic": 0,
+            "p_anytls": 0,
+            "p_snell": 0,
             "hop_range": default_hop,
             "allocated_summary": f"标准全端口 (随机安全高位端口 + 跳跃:{default_hop or '无'})"
         }
@@ -950,6 +977,8 @@ def deploy_server_worker(task_id, server_id):
             env_exports.append(f"export PORT_REALITY={port_info['p_reality']}")
             env_exports.append(f"export PORT_HY2={port_info['p_hy2']}")
             env_exports.append(f"export PORT_TUIC={port_info['p_tuic']}")
+            env_exports.append(f"export PORT_ANYTLS={port_info['p_anytls']}")
+            env_exports.append(f"export PORT_SNELL={port_info['p_snell']}")
             if port_info["hop_range"]:
                 env_exports.append(f"export SB_HOP_RANGE=\"{port_info['hop_range']}\"")
             else:
@@ -958,11 +987,28 @@ def deploy_server_worker(task_id, server_id):
             if port_info.get("hop_range"):
                 env_exports.append(f"export SB_HOP_RANGE=\"{port_info['hop_range']}\"")
 
-        # Protocols (Reality / Hy2 / TUIC)
+        # Protocols (Reality / Hy2 / TUIC / AnyTLS / Snell v6)
         protocols = global_cfg.get("default_protocols", {})
         env_exports.append(f"export SB_ENABLE_REALITY={1 if protocols.get('reality', True) else 0}")
         env_exports.append(f"export SB_ENABLE_HY2={1 if protocols.get('hy2', True) else 0}")
         env_exports.append(f"export SB_ENABLE_TUIC={1 if protocols.get('tuic', True) else 0}")
+        env_exports.append(f"export SB_ENABLE_ANYTLS={1 if protocols.get('anytls', False) else 0}")
+        env_exports.append(f"export SB_ENABLE_SNELL={1 if protocols.get('snell', False) else 0}")
+        snell_mode = (server.get("snell_mode") or global_cfg.get("default_snell_mode") or "default").strip()
+        if snell_mode not in ("default", "unshaped", "unsafe-raw"):
+            snell_mode = "default"
+        env_exports.append(f"export SB_SNELL_MODE=\"{snell_mode}\"")
+
+        # WARP mode (server override or global default)
+        warp_mode = (server.get("warp_mode") or "").strip()
+        if not warp_mode:
+            warp_mode = (global_cfg.get("default_warp_mode") or "off").strip()
+        if warp_mode in ("ai", "v4", "v6", "all"):
+            env_exports.append("export SB_ENABLE_WARP=1")
+            env_exports.append(f"export SB_WARP_MODE=\"{warp_mode}\"")
+        else:
+            env_exports.append("export SB_ENABLE_WARP=0")
+            env_exports.append("export SB_WARP_MODE=\"ai\"")
 
         # Reality SNI (custom or auto-select)
         reality_sni = server.get("reality_sni", "").strip()
@@ -978,21 +1024,43 @@ def deploy_server_worker(task_id, server_id):
             else:
                 env_exports.append("export SB_ACME_MODE=\"standalone\"")
 
-        # Argo (VLESS+WS only; explicitly disable if turned off so stale STATE_FILE isn't reused)
-        if argo_is_on and argo_domain and argo_token:
+        # Argo (VLESS+WS; supports fixed & quick tunnel + http2/quic/auto protocol)
+        argo_mode = (server.get("argo_mode") or "").strip()
+        if not argo_mode:
+            argo_mode = "fixed" if (argo_domain and argo_token) else "quick"
+        argo_protocol = (server.get("argo_protocol") or global_cfg.get("default_argo_protocol") or "http2").strip()
+        if argo_protocol not in ("http2", "quic", "auto"):
+            argo_protocol = "http2"
+
+        argo_active = False
+        if argo_is_on and argo_mode == "quick":
+            argo_active = True
             env_exports.append("export SB_ARGO_DISABLE=0")
+            env_exports.append("export SB_ARGO_MODE=\"quick\"")
+            env_exports.append(f"export SB_ARGO_PROTOCOL=\"{argo_protocol}\"")
+            env_exports.append("export SB_ARGO_DOMAIN=\"\"")
+            env_exports.append("export SB_ARGO_TOKEN=\"\"")
+            env_exports.append("export SB_ARGO_TRANSPORT=\"ws\"")
+            argo_status_desc = f"已启用 (Quick Tunnel 临时隧道 | {argo_protocol} | VLESS+WS)"
+        elif argo_is_on and argo_domain and argo_token:
+            argo_active = True
+            env_exports.append("export SB_ARGO_DISABLE=0")
+            env_exports.append("export SB_ARGO_MODE=\"fixed\"")
+            env_exports.append(f"export SB_ARGO_PROTOCOL=\"{argo_protocol}\"")
             env_exports.append(f"export SB_ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export SB_ARGO_TOKEN=\"{argo_token}\"")
             env_exports.append("export SB_ARGO_TRANSPORT=\"ws\"")
             env_exports.append(f"export ARGO_DOMAIN=\"{argo_domain}\"")
             env_exports.append(f"export ARGO_TOKEN=\"{argo_token}\"")
             env_exports.append("export ARGO_TRANSPORT=\"ws\"")
+            argo_status_desc = f"已启用 ({argo_domain} | {argo_protocol} | VLESS+WS)"
         else:
             env_exports.append("export SB_ARGO_DISABLE=1")
+            env_exports.append("export SB_ARGO_MODE=\"off\"")
             env_exports.append("export SB_ARGO_DOMAIN=\"\"")
             env_exports.append("export SB_ARGO_TOKEN=\"\"")
+            argo_status_desc = "未启用"
 
-        argo_status_desc = f"已启用 ({argo_domain} | VLESS+WS)" if (argo_is_on and argo_domain and argo_token) else "未启用"
         append_task_log(task_id, f"部署参数就绪: 端口策略 [{port_info['allocated_summary']}], Argo 隧道 [{argo_status_desc}]", progress=55)
 
         ts = int(time.time())
@@ -1047,21 +1115,38 @@ else rc-service sing-box status 2>/dev/null || systemctl is-active sing-box 2>/d
         is_running = any(k in c_lower for k in ("active", "started", "running")) or any(s.strip().isdigit() for s in c_out.splitlines() if s.strip())
 
         # Check cloudflared service if Argo is enabled
-        if argo_is_on and argo_domain and argo_token:
+        detected_argo_domain = ""
+        if argo_active:
             cf_check = r'''
 if systemctl is-active cloudflared >/dev/null 2>&1; then echo "active";
 elif command -v rc-service >/dev/null 2>&1 && rc-service cloudflared status 2>/dev/null | grep -qi "started"; then echo "active";
 elif [ -x /etc/init.d/cloudflared ] && /etc/init.d/cloudflared status 2>/dev/null | grep -qi "started"; then echo "active";
 elif pidof cloudflared >/dev/null 2>&1 || pgrep -f "cloudflared" >/dev/null 2>&1; then echo "active";
 else rc-service cloudflared status 2>/dev/null || systemctl is-active cloudflared 2>/dev/null || echo "inactive"; fi
+grep -E '^SB_ARGO_DOMAIN=' /etc/sing-box/.sb_state 2>/dev/null | head -n1 || true
 '''
             _, cf_out = runner.run_cmd(cf_check, timeout=10)
             cf_lower = cf_out.lower()
             cf_running = any(k in cf_lower for k in ("active", "started", "running")) or any(s.strip().isdigit() for s in cf_out.splitlines() if s.strip())
+            m_dom = re.search(r'SB_ARGO_DOMAIN="([^"]*)"', cf_out)
+            if m_dom and m_dom.group(1).strip():
+                detected_argo_domain = m_dom.group(1).strip()
             if cf_running:
-                append_task_log(task_id, "Cloudflare Argo 隧道守护进程已连接并正常在线！", progress=95)
+                dom_tip = f" ({detected_argo_domain})" if detected_argo_domain else ""
+                append_task_log(task_id, f"Cloudflare Argo 隧道守护进程已连接并正常在线{dom_tip}！", progress=95)
             else:
                 append_task_log(task_id, "提示: Cloudflare Argo 隧道守护进程未处于 active 状态，请检查 Token 权限或服务日志", progress=95)
+
+        push_meta_m = re.search(r'\[PUSH_META\]\s+ok=(\d+)\s+argo_domain=([^\s]*)\s+main_count=(\d+)', out or '')
+        push_ok_flag = None
+        if push_meta_m:
+            push_ok_flag = (push_meta_m.group(1) == '1')
+            if push_meta_m.group(2).strip():
+                detected_argo_domain = push_meta_m.group(2).strip()
+        elif "节点已成功推送到节点管理平台" in (out or ""):
+            push_ok_flag = True
+        elif "节点推送未完全成功" in (out or ""):
+            push_ok_flag = False
 
         # Update server state in config
         with config_lock:
@@ -1072,6 +1157,12 @@ else rc-service cloudflared status 2>/dev/null || systemctl is-active cloudflare
                     s["os_info"] = f"{os_str} ({arch_str})"
                     if bbr_str:
                         s["bbr_info"] = bbr_str
+                    if detected_argo_domain and argo_mode == "quick":
+                        s["argo_domain"] = detected_argo_domain
+                    if push_ok_flag is not None:
+                        s["last_push_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        s["last_push_status"] = "success" if push_ok_flag else "error"
+                        s["last_push_msg"] = "部署自动推送成功" if push_ok_flag else "部署自动推送失败 (已入重试队列)"
                     s["last_deployed"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     s["last_check_result"] = {
                         "singbox_running": is_running,
@@ -1480,9 +1571,13 @@ def add_server():
         "domain": data.get('domain', '').strip(),
         "reality_sni": data.get('reality_sni', '').strip(),
         "argo_enabled": bool(data.get('argo_enabled', False)),
+        "argo_mode": (data.get('argo_mode') or 'fixed').strip(),
+        "argo_protocol": (data.get('argo_protocol') or 'http2').strip(),
         "argo_domain": data.get('argo_domain', '').strip(),
         "argo_transport": "ws",
         "argo_token": clean_argo_token(data.get('argo_token', '')),
+        "warp_mode": (data.get('warp_mode') or '').strip(),
+        "snell_mode": (data.get('snell_mode') or '').strip(),
         "status": "idle",
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
@@ -1503,7 +1598,8 @@ def update_server(server_id):
     updatable_fields = [
         'name', 'host', 'port', 'user', 'auth_type', 'password', 'private_key',
         'tag_main', 'tag_argo', 'port_mode', 'port_range', 'domain', 'reality_sni',
-        'argo_enabled', 'argo_domain', 'argo_transport', 'argo_token'
+        'argo_enabled', 'argo_mode', 'argo_protocol', 'argo_domain', 'argo_transport', 'argo_token',
+        'warp_mode', 'snell_mode'
     ]
     for field in updatable_fields:
         if field in data:
@@ -2491,9 +2587,30 @@ else
   echo "FAIL: 未找到 /usr/local/bin/sb 管理脚本"
 fi
 '''
-                        _, out = runner.run_cmd(cmd, timeout=40)
-                        append_task_log(task_id, f"[{name}] 同步节点: {out.strip()[:120]}")
-                        success_count += 1
+                        _, out = runner.run_cmd(cmd, timeout=60)
+                        out_clean = (out or "").strip()
+                        meta_m = re.search(r'\[PUSH_META\]\s+ok=(\d+)\s+argo_domain=([^\s]*)\s+main_count=(\d+)', out_clean)
+                        if meta_m:
+                            push_ok = (meta_m.group(1) == '1')
+                            pushed_argo_dom = meta_m.group(2).strip()
+                        else:
+                            push_ok = ("节点已成功推送" in out_clean or "推送成功" in out_clean) and ("FAIL:" not in out_clean and "推送失败" not in out_clean)
+                            pushed_argo_dom = ""
+                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        with config_lock:
+                            cur_cfg = load_config()
+                            for srv_item in cur_cfg.get("servers", []):
+                                if str(srv_item.get("id")) == str(target_srv.get("id")):
+                                    srv_item["last_push_at"] = now_str
+                                    srv_item["last_push_status"] = "success" if push_ok else "error"
+                                    srv_item["last_push_msg"] = "推送成功" if push_ok else (out_clean.splitlines()[-1][:120] if out_clean else "推送失败")
+                                    if pushed_argo_dom and srv_item.get("argo_mode") == "quick":
+                                        srv_item["argo_domain"] = pushed_argo_dom
+                                    break
+                            save_config_unlocked(cur_cfg)
+                        append_task_log(task_id, f"[{name}] 同步节点 ({'成功' if push_ok else '失败'}): {out_clean[:120]}")
+                        if push_ok:
+                            success_count += 1
                     elif action == "update_script":
                         script_url = cfg.get("global", {}).get("install_script_url", "https://raw.githubusercontent.com/kzhx666/sb-install-plus/main/install.sh")
                         ts = int(time.time())
@@ -2575,14 +2692,14 @@ fi
 # 3. 删除二进制可执行文件与快捷脚本
 rm -f /usr/local/bin/sing-box /usr/bin/sing-box 2>/dev/null || true
 rm -f /usr/local/bin/sb /usr/bin/sb 2>/dev/null || true
-rm -f /usr/local/bin/sb-hop.sh /usr/local/bin/sb-selfcheck.sh 2>/dev/null || true
+rm -f /usr/local/bin/sb-hop.sh /usr/local/bin/sb-selfcheck.sh /usr/local/bin/sb-argo-watch.sh 2>/dev/null || true
 rm -f /usr/local/bin/cloudflared /usr/bin/cloudflared 2>/dev/null || true
 rm -f /usr/local/bin/xray-argo /usr/local/bin/xray 2>/dev/null || true
 
 # 4. 删除配置文件、状态文件、证书、日志与临时缓存
 rm -rf /etc/sing-box 2>/dev/null || true
 rm -rf /etc/cloudflared 2>/dev/null || true
-rm -rf /var/log/sing-box* 2>/dev/null || true
+rm -rf /var/log/sing-box* /var/log/cloudflared-argo.log 2>/dev/null || true
 rm -rf /tmp/sb* /tmp/sing-box* /tmp/cloudflared* /tmp/xray* 2>/dev/null || true
 
 # 5. 清理 Crontab 计划任务残留

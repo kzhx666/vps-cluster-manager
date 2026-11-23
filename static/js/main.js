@@ -308,9 +308,30 @@ function renderServers() {
       : `<span class="pill-tag">ECC 自签伪装</span>`;
 
     // Argo tag
-    let argoTagHtml = s.argo_enabled && s.argo_domain 
-      ? `<span class="pill-tag tag-argo">Argo: ${escapeHtml(s.argo_domain)} (VLESS+WS)</span>` 
-      : '';
+    let argoTagHtml = '';
+    if (s.argo_enabled) {
+      const aProto = s.argo_protocol || 'http2';
+      if (s.argo_mode === 'quick') {
+        const qDom = s.argo_domain ? escapeHtml(s.argo_domain) : '待生成 trycloudflare.com';
+        argoTagHtml = `<span class="pill-tag tag-argo">Argo Quick: ${qDom} (${aProto})</span>`;
+      } else if (s.argo_domain) {
+        argoTagHtml = `<span class="pill-tag tag-argo">Argo: ${escapeHtml(s.argo_domain)} (${aProto})</span>`;
+      }
+    }
+
+    // Push status badge
+    let pushStatusHtml = '';
+    if (s.last_push_at) {
+      const pOk = s.last_push_status === 'success';
+      const pColor = pOk ? '#6ee7b7' : '#fca5a5';
+      const pIcon = pOk ? '✅' : '❌';
+      const pTitle = escapeHtml(s.last_push_msg || '');
+      pushStatusHtml = `
+        <div class="detail-row">
+          <span class="detail-label">最近推送:</span>
+          <span class="detail-value" style="color:${pColor};" title="${pTitle}">${pIcon} ${escapeHtml(s.last_push_at)}</span>
+        </div>`;
+    }
 
     // BBR badge
     let bbrBadgeHtml = '';
@@ -399,6 +420,7 @@ function renderServers() {
           <span class="detail-label">最近部署:</span>
           <span class="detail-value">${s.last_deployed || '未记录'}</span>
         </div>
+        ${pushStatusHtml}
         ${unlockHtml ? `
         <div class="detail-row" style="border:none; padding-bottom:0;">
           <span class="detail-label">流媒体解锁:</span>
@@ -1211,6 +1233,16 @@ function openGlobalConfigModal() {
   document.getElementById('cfg-proto-reality').checked = protos.reality !== false;
   document.getElementById('cfg-proto-hy2').checked = protos.hy2 !== false;
   document.getElementById('cfg-proto-tuic').checked = protos.tuic !== false;
+  const anytlsEl = document.getElementById('cfg-proto-anytls');
+  if (anytlsEl) anytlsEl.checked = protos.anytls === true;
+  const snellEl = document.getElementById('cfg-proto-snell');
+  if (snellEl) snellEl.checked = protos.snell === true;
+  const snellModeEl = document.getElementById('cfg-snell-mode');
+  if (snellModeEl) snellModeEl.value = g.default_snell_mode || 'default';
+  const warpModeEl = document.getElementById('cfg-warp-mode');
+  if (warpModeEl) warpModeEl.value = g.default_warp_mode || 'off';
+  const argoProtoEl = document.getElementById('cfg-argo-protocol');
+  if (argoProtoEl) argoProtoEl.value = g.default_argo_protocol || 'http2';
 
   document.getElementById('cfg-script-url').value = g.install_script_url || '';
   const hopInput = document.getElementById('cfg-default-hop-range');
@@ -1270,8 +1302,13 @@ async function saveGlobalConfig() {
     default_protocols: {
       reality: document.getElementById('cfg-proto-reality').checked,
       hy2: document.getElementById('cfg-proto-hy2').checked,
-      tuic: document.getElementById('cfg-proto-tuic').checked
+      tuic: document.getElementById('cfg-proto-tuic').checked,
+      anytls: document.getElementById('cfg-proto-anytls') ? document.getElementById('cfg-proto-anytls').checked : false,
+      snell: document.getElementById('cfg-proto-snell') ? document.getElementById('cfg-proto-snell').checked : false
     },
+    default_snell_mode: document.getElementById('cfg-snell-mode') ? document.getElementById('cfg-snell-mode').value : 'default',
+    default_warp_mode: document.getElementById('cfg-warp-mode') ? document.getElementById('cfg-warp-mode').value : 'off',
+    default_argo_protocol: document.getElementById('cfg-argo-protocol') ? document.getElementById('cfg-argo-protocol').value : 'http2',
     default_hop_range: document.getElementById('cfg-default-hop-range') ? document.getElementById('cfg-default-hop-range').value.trim() : '30000-32000',
     install_script_url: document.getElementById('cfg-script-url').value.trim(),
     concurrency: parseInt(document.getElementById('cfg-concurrency').value) || 5,
@@ -1375,8 +1412,12 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-port-range').value = server.port_range || '';
     document.getElementById('srv-domain').value = server.domain || '';
     document.getElementById('srv-reality-sni').value = server.reality_sni || '';
+    if (document.getElementById('srv-warp-mode')) document.getElementById('srv-warp-mode').value = server.warp_mode || '';
+    if (document.getElementById('srv-snell-mode')) document.getElementById('srv-snell-mode').value = server.snell_mode || '';
 
     document.getElementById('srv-argo-enabled').checked = !!server.argo_enabled;
+    if (document.getElementById('srv-argo-mode')) document.getElementById('srv-argo-mode').value = server.argo_mode || 'fixed';
+    if (document.getElementById('srv-argo-protocol')) document.getElementById('srv-argo-protocol').value = server.argo_protocol || 'http2';
     document.getElementById('srv-argo-domain').value = server.argo_domain || '';
     document.getElementById('srv-argo-token').value = server.argo_token || '';
 
@@ -1384,6 +1425,7 @@ function openServerModal(serverId = null) {
     document.getElementById('grp-password').style.display = isKey ? 'none' : 'block';
     document.getElementById('grp-private-key').style.display = isKey ? 'block' : 'none';
     document.getElementById('grp-argo-details').style.display = server.argo_enabled ? 'block' : 'none';
+    toggleArgoModeFields();
   } else {
     // New server defaults
     document.getElementById('srv-name').value = '';
@@ -1401,14 +1443,19 @@ function openServerModal(serverId = null) {
     document.getElementById('srv-port-range').value = '';
     document.getElementById('srv-domain').value = '';
     document.getElementById('srv-reality-sni').value = '';
+    if (document.getElementById('srv-warp-mode')) document.getElementById('srv-warp-mode').value = '';
+    if (document.getElementById('srv-snell-mode')) document.getElementById('srv-snell-mode').value = '';
 
     document.getElementById('srv-argo-enabled').checked = false;
+    if (document.getElementById('srv-argo-mode')) document.getElementById('srv-argo-mode').value = 'fixed';
+    if (document.getElementById('srv-argo-protocol')) document.getElementById('srv-argo-protocol').value = (state.config && state.config.global && state.config.global.default_argo_protocol) || 'http2';
     document.getElementById('srv-argo-domain').value = '';
     document.getElementById('srv-argo-token').value = '';
 
     document.getElementById('grp-password').style.display = 'block';
     document.getElementById('grp-private-key').style.display = 'none';
     document.getElementById('grp-argo-details').style.display = 'none';
+    toggleArgoModeFields();
   }
 
   updateNatPreview();
@@ -1419,6 +1466,17 @@ function openServerModal(serverId = null) {
   }
   openModal('modal-server-edit');
 }
+
+function toggleArgoModeFields() {
+  const modeEl = document.getElementById('srv-argo-mode');
+  const fixedEl = document.getElementById('grp-argo-fixed-fields');
+  const quickTipEl = document.getElementById('grp-argo-quick-tip');
+  if (!modeEl || !fixedEl || !quickTipEl) return;
+  const isQuick = modeEl.value === 'quick';
+  fixedEl.style.display = isQuick ? 'none' : 'block';
+  quickTipEl.style.display = isQuick ? 'block' : 'none';
+}
+window.toggleArgoModeFields = toggleArgoModeFields;
 
 function updateNatPreview() {
   const mode = document.getElementById('srv-port-mode').value;
@@ -1454,7 +1512,9 @@ function updateNatPreview() {
   const enR = protos.reality !== false;
   const enH = protos.hy2 !== false;
   const enT = protos.tuic !== false;
-  const needed = (enR ? 1 : 0) + (enH ? 1 : 0) + (enT ? 1 : 0);
+  const enA = protos.anytls === true;
+  const enS = protos.snell === true;
+  const needed = (enR ? 1 : 0) + (enH ? 1 : 0) + (enT ? 1 : 0) + (enA ? 1 : 0) + (enS ? 1 : 0);
 
   if (portList.length < needed) {
     preview.textContent = `❌ 端口总数只有 ${portList.length} 个，不足以分配已启用的 ${needed} 个协议`;
@@ -1465,6 +1525,8 @@ function updateNatPreview() {
   const pReality = enR ? portList[idx++] : 0;
   const pHy2 = enH ? portList[idx++] : 0;
   const pTuic = enT ? portList[idx++] : 0;
+  const pAnytls = enA ? portList[idx++] : 0;
+  const pSnell = enS ? portList[idx++] : 0;
   const rem = portList.slice(idx);
 
   let hopStr = '无 (剩余端口不足2个)';
@@ -1473,7 +1535,14 @@ function updateNatPreview() {
     hopStr = isContig ? `${rem[0]}-${rem[rem.length - 1]}` : rem.join(',');
   }
 
-  preview.textContent = `💡 规划结果: Reality=${pReality}, Hy2=${pHy2}, TUIC=${pTuic}, Hy2跳跃池=${hopStr} (共${portList.length}端口)`;
+  const parts = [];
+  if (enR) parts.push(`Reality=${pReality}`);
+  if (enH) parts.push(`Hy2=${pHy2}`);
+  if (enT) parts.push(`TUIC=${pTuic}`);
+  if (enA) parts.push(`AnyTLS=${pAnytls}`);
+  if (enS) parts.push(`Snell=${pSnell}`);
+  parts.push(`Hy2跳跃池=${hopStr}`);
+  preview.textContent = `💡 规划结果: ${parts.join(', ')} (共${portList.length}端口)`;
 }
 
 async function saveServer() {
@@ -1517,7 +1586,11 @@ async function saveServer() {
       port_range: document.getElementById('srv-port-range').value.trim(),
       domain: document.getElementById('srv-domain').value.trim(),
       reality_sni: document.getElementById('srv-reality-sni').value.trim(),
+      warp_mode: document.getElementById('srv-warp-mode') ? document.getElementById('srv-warp-mode').value : '',
+      snell_mode: document.getElementById('srv-snell-mode') ? document.getElementById('srv-snell-mode').value : '',
       argo_enabled: document.getElementById('srv-argo-enabled').checked,
+      argo_mode: document.getElementById('srv-argo-mode') ? document.getElementById('srv-argo-mode').value : 'fixed',
+      argo_protocol: document.getElementById('srv-argo-protocol') ? document.getElementById('srv-argo-protocol').value : 'http2',
       argo_domain: document.getElementById('srv-argo-domain').value.trim(),
       argo_transport: 'ws',
       argo_token: cleanArgoToken(document.getElementById('srv-argo-token').value)

@@ -347,7 +347,7 @@
           </div>
           <div class="form-row">
             <div class="form-group col-12">
-              <label>默认启用协议 (精简三大王牌协议，默认全开):</label>
+              <label>默认启用协议 (纯 Sing-box 单内核原生支持):</label>
               <div class="checkbox-group">
                 <label class="checkbox-label">
                   <input type="checkbox" id="cfg-proto-reality" checked>
@@ -361,7 +361,43 @@
                   <input type="checkbox" id="cfg-proto-tuic" checked>
                   <span>TUIC v5 (QUIC 极低延迟备用、默认开启)</span>
                 </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-anytls">
+                  <span>AnyTLS (Sing-box 1.12+ 原生抗特征 TLS)</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="cfg-proto-snell">
+                  <span>Snell v6 (Sing-box 1.14+ 原生，适配 Surge/Mihomo)</span>
+                </label>
               </div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group col-4">
+              <label for="cfg-snell-mode">Snell v6 流量整形模式:</label>
+              <select id="cfg-snell-mode">
+                <option value="default">default (默认推荐)</option>
+                <option value="unshaped">unshaped (不整形)</option>
+                <option value="unsafe-raw">unsafe-raw (原始模式)</option>
+              </select>
+            </div>
+            <div class="form-group col-4">
+              <label for="cfg-warp-mode">默认 WARP 分流模式:</label>
+              <select id="cfg-warp-mode">
+                <option value="off">关闭 (原生直连)</option>
+                <option value="ai">ai (仅 AI 与流媒体走 WARP)</option>
+                <option value="v4">v4 (所有 IPv4 出站走 WARP)</option>
+                <option value="v6">v6 (所有 IPv6 出站走 WARP)</option>
+                <option value="all">all (全局流量走 WARP)</option>
+              </select>
+            </div>
+            <div class="form-group col-4">
+              <label for="cfg-argo-protocol">默认 Argo 隧道协议:</label>
+              <select id="cfg-argo-protocol">
+                <option value="http2">http2 (默认推荐，抗 UDP 阻断)</option>
+                <option value="quic">quic (UDP 传输，低延迟)</option>
+                <option value="auto">auto (自动协商)</option>
+              </select>
             </div>
           </div>
           <div class="form-row">
@@ -554,7 +590,7 @@
           </div>
           <div class="form-row">
             <div class="form-group col-6">
-              <label for="srv-domain">自有域名 (Hy2 / TUIC 申请证书):</label>
+              <label for="srv-domain">自有域名 (Hy2 / TUIC / AnyTLS 申请证书):</label>
               <input type="text" id="srv-domain" placeholder="留空自动使用 10 年免证书 ECC 伪装自签">
               <span class="input-tip">填写后联动全局 Cloudflare Token 走 DNS-01 验证 (无视 80 端口关闭)</span>
             </div>
@@ -562,6 +598,28 @@
               <label for="srv-reality-sni">Reality 专属伪装域名 (SNI 目标):</label>
               <input type="text" id="srv-reality-sni" placeholder="留空则由脚本并发测速优选">
               <span class="input-tip">可指定特定域名 (如 swdist.apple.com 或 dl.google.com)</span>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group col-6">
+              <label for="srv-warp-mode">单机 WARP 分流覆盖:</label>
+              <select id="srv-warp-mode">
+                <option value="">跟随全局默认</option>
+                <option value="off">关闭 (原生直连)</option>
+                <option value="ai">ai (仅 AI 与流媒体走 WARP)</option>
+                <option value="v4">v4 (所有 IPv4 出站走 WARP，纯 IPv6 机推荐)</option>
+                <option value="v6">v6 (所有 IPv6 出站走 WARP)</option>
+                <option value="all">all (全局流量走 WARP)</option>
+              </select>
+            </div>
+            <div class="form-group col-6">
+              <label for="srv-snell-mode">单机 Snell v6 模式覆盖:</label>
+              <select id="srv-snell-mode">
+                <option value="">跟随全局默认</option>
+                <option value="default">default (默认推荐)</option>
+                <option value="unshaped">unshaped (不整形)</option>
+                <option value="unsafe-raw">unsafe-raw (原始模式)</option>
+              </select>
             </div>
           </div>
         </div>
@@ -580,28 +638,47 @@
           </div>
           <div id="grp-argo-details" style="display: none;">
             <div class="form-row">
-              <div class="form-group col-7">
-                <label for="srv-argo-domain">绑定的 Argo 域名 (例如: argo-hk.example.com):</label>
-                <input type="text" id="srv-argo-domain" placeholder="argo-hk.example.com">
+              <div class="form-group col-6">
+                <label for="srv-argo-mode">隧道模式:</label>
+                <select id="srv-argo-mode" onchange="toggleArgoModeFields()">
+                  <option value="fixed">固定隧道 (Fixed Tunnel: Token + 绑定域名)</option>
+                  <option value="quick">临时隧道 (Quick Tunnel: 免 Token 自动生成 trycloudflare.com)</option>
+                </select>
               </div>
-              <div class="form-group col-5">
-                <label>穿透传输协议:</label>
-                <div style="padding: 9px 12px; border-radius: 8px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: #6ee7b7; font-size: 13px; font-weight: 600;">
-                  VLESS + WebSocket (经典防封模式)
-                </div>
-                <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
-                  🛡️ 统一采用 Sing-box 原生 VLESS+WS + 随机路径，配合 CF 优选 IP 稳定抗封
-                </small>
+              <div class="form-group col-6">
+                <label for="srv-argo-protocol">cloudflared 传输协议:</label>
+                <select id="srv-argo-protocol">
+                  <option value="http2">http2 (默认推荐，抗 UDP 阻断最稳)</option>
+                  <option value="quic">quic (UDP 传输，延迟更低)</option>
+                  <option value="auto">auto (自动协商)</option>
+                </select>
               </div>
             </div>
-            <div class="form-row">
-              <div class="form-group col-12">
-                <label for="srv-argo-token">Cloudflare Tunnel Token:</label>
-                <input type="text" id="srv-argo-token" placeholder="粘贴整行命令或 Token (支持自动提取 eyJ...)" autocomplete="off">
-                <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
-                  💡 支持直接粘贴包含 <code>cloudflared service install ...</code> 的整行命令，系统将自动识别并只保留 <code>eyJ...</code> 核心 Token
-                </small>
+            <div id="grp-argo-fixed-fields">
+              <div class="form-row">
+                <div class="form-group col-7">
+                  <label for="srv-argo-domain">绑定的 Argo 域名 (例如: argo-hk.example.com):</label>
+                  <input type="text" id="srv-argo-domain" placeholder="argo-hk.example.com">
+                </div>
+                <div class="form-group col-5">
+                  <label>穿透传输协议:</label>
+                  <div style="padding: 9px 12px; border-radius: 8px; background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.25); color: #6ee7b7; font-size: 13px; font-weight: 600;">
+                    VLESS + WebSocket (经典防封模式)
+                  </div>
+                </div>
               </div>
+              <div class="form-row">
+                <div class="form-group col-12">
+                  <label for="srv-argo-token">Cloudflare Tunnel Token:</label>
+                  <input type="text" id="srv-argo-token" placeholder="粘贴整行命令或 Token (支持自动提取 eyJ...)" autocomplete="off">
+                  <small style="display:block; margin-top:4px; font-size:11px; color:var(--text-dim);">
+                    💡 支持直接粘贴包含 <code>cloudflared service install ...</code> 的整行命令，系统将自动识别并只保留 <code>eyJ...</code> 核心 Token
+                  </small>
+                </div>
+              </div>
+            </div>
+            <div id="grp-argo-quick-tip" style="display:none; padding: 10px 12px; border-radius: 8px; background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.25); color: #67e8f9; font-size: 12px;">
+              ⚡ 临时隧道无需 Token 与域名，部署后自动生成 <code>*.trycloudflare.com</code> 并推送；隧道重启域名变化时将自动静默重推！
             </div>
           </div>
         </div>
